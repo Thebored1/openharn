@@ -1,0 +1,10 @@
+openharn incorporates code and prompt text adapted from opencode
+(https://github.com/sst/opencode), used under the MIT License.
+
+Adapted / ported components:
+  - src/edit.rs        — a Rust port of opencode's edit replacer engine (edit.ts)
+  - src/prompt.txt     — adapted from opencode's default system prompt (default.txt)
+  - several tool descriptions in src/tools.rs follow opencode's tool descriptions
+
+opencode is Copyright (c) 2025 opencode and is MIT licensed.
+The full opencode license text is included at: LICENSES/opencode-MIT.txt

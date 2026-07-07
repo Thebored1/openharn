@@ -1,0 +1,15 @@
+[package]
+name = "openharn"
+version = "0.1.0"
+edition = "2024"
+
+# Standalone project — deliberately tiny dependency surface. The whole harness is
+# ours: a blocking reqwest loop against any OpenAI-compatible endpoint (local
+# llama-server, or a cloud provider via base_url + key). No agent framework.
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+regex = "1"
+glob = "0.3"

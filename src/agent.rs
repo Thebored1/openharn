@@ -1,0 +1,328 @@
+//! The whole harness, in one place: a blocking loop against any OpenAI-compatible
+//! endpoint. It keeps the REAL conversation (system, user, assistant-with-tool_calls,
+//! and tool RESULTS) so the model always has coherent context, streams the
+//! assistant's text live, dispatches tool calls to `tools`, and stops when the
+//! model replies with no tool call.
+//!
+//! Deliberately not a framework: the entire agent behaviour is visible and ours to
+//! control (streaming, tool parsing, context, stop conditions).
+
+use crate::tools;
+use serde_json::{json, Value};
+use std::io::{self, BufRead, BufReader, Write};
+
+/// One OpenAI-compatible endpoint. Local (`llama-server`, no key) or a cloud
+/// provider (base_url + key) — same loop either way.
+pub struct Config {
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub max_turns: usize,
+    pub temperature: f64,
+}
+
+const SYSTEM: &str = include_str!("prompt.txt");
+
+/// Rough char budget for the running conversation. ~4 chars/token, so ~16000
+/// chars ≈ 4000 tokens — leaves ample room for the system prompt, the tool
+/// schemas, and the reply inside an 8k context. Shrunk further if the server
+/// still rejects (see the 400 handler).
+const HISTORY_BUDGET: usize = 16_000;
+
+/// A single tool result can be huge (a whole-system glob returns hundreds of
+/// paths). Cap it so one result can't blow the context on its own.
+const TOOL_RESULT_CAP: usize = 4_000;
+
+fn cap_result(mut s: String) -> String {
+    if s.chars().count() > TOOL_RESULT_CAP {
+        s = s.chars().take(TOOL_RESULT_CAP).collect();
+        s.push_str("\n…[result truncated — narrow your search (a more specific pattern) if you need more]");
+    }
+    s
+}
+
+/// Trim the conversation to fit `max_chars`, always keeping the system message and
+/// dropping OLDEST whole turns first (a user message plus the assistant/tool
+/// messages that follow it), so a tool result is never orphaned from its call.
+fn fit_context(history: &mut Vec<Value>, max_chars: usize) {
+    let total = |h: &[Value]| -> usize { h.iter().map(|m| m.to_string().len()).sum() };
+    while total(history) > max_chars && history.len() > 3 {
+        // history[0] is system; drop the turn starting at index 1.
+        let mut end = 2;
+        while end < history.len() && history[end]["role"] != "user" {
+            end += 1;
+        }
+        history.drain(1..end);
+    }
+}
+
+/// Run one user request to completion, mutating `history` (the live conversation)
+/// and `session` (read-tracking) in place so the next request keeps full context.
+pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session, user: &str) {
+    if history.is_empty() {
+        history.push(json!({ "role": "system", "content": SYSTEM }));
+    }
+    history.push(json!({ "role": "user", "content": user }));
+
+    // pool_max_idle_per_host(0): never reuse a keep-alive connection — after a
+    // streamed (SSE) response the pooled socket can be left half-consumed, and the
+    // NEXT request on it fails at send ("error sending request"). A fresh
+    // connection each turn avoids that entirely.
+    let client = reqwest::blocking::Client::builder()
+        .pool_max_idle_per_host(0)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new());
+    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    // Spiral guard: a small model that repeats the exact same call is stuck, not
+    // thorough. Track calls made this run and short-circuit exact repeats.
+    let mut seen_calls = std::collections::HashSet::<String>::new();
+    let mut budget = HISTORY_BUDGET;
+    // Circuit breaker: if the model keeps re-issuing calls it already made, it's
+    // stuck. The soft "you already did this" nudge isn't always enough for a tiny
+    // model, so hard-stop after a few repeats instead of burning every turn.
+    let mut repeats = 0usize;
+
+    for _ in 0..cfg.max_turns {
+        // Keep the conversation within the model's context before every request.
+        fit_context(history, budget);
+        let body = json!({
+            "model": cfg.model,
+            "messages": history,
+            "tools": tools::schemas(),
+            "tool_choice": "auto",
+            "temperature": cfg.temperature,
+            "stream": true,
+            // final chunk carries usage (and llama-server adds `timings`) → tok/s
+            "stream_options": { "include_usage": true },
+        });
+        // Send with one retry — a transient connection blip (server briefly busy,
+        // a reset socket) resolves on a fresh connection.
+        let resp = {
+            let mut attempt = 0;
+            loop {
+                let mut req = client.post(&url).json(&body);
+                if let Some(k) = &cfg.api_key {
+                    req = req.bearer_auth(k);
+                }
+                match req.send() {
+                    Ok(r) => break r,
+                    Err(_) if attempt == 0 => {
+                        attempt += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                    }
+                    Err(e) => {
+                        println!("[error] request failed after retry: {e}");
+                        return;
+                    }
+                }
+            }
+        };
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let txt = resp.text().unwrap_or_default();
+            // Context overflow: shrink the budget and retry this turn instead of dying.
+            if status.as_u16() == 400 && txt.contains("context") && budget > 4_000 {
+                budget /= 2;
+                continue;
+            }
+            println!("[error] HTTP {status}: {txt}");
+            return;
+        }
+
+        let (content, tool_calls) = stream_response(resp);
+
+        // Record the assistant turn so the next turn's context stays coherent (and
+        // the KV-cache prefix stable).
+        let mut assistant = json!({ "role": "assistant" });
+        assistant["content"] = if content.is_empty() { Value::Null } else { json!(content) };
+        if !tool_calls.is_empty() {
+            assistant["tool_calls"] = json!(tool_calls);
+        }
+        history.push(assistant);
+
+        if tool_calls.is_empty() {
+            return; // text was already streamed live
+        }
+
+        for tc in &tool_calls {
+            let id = tc["id"].as_str().unwrap_or("");
+            let name = tc["function"]["name"].as_str().unwrap_or("");
+            let args_raw = tc["function"]["arguments"].as_str().unwrap_or("{}");
+            let args: Value = serde_json::from_str(args_raw).unwrap_or_else(|_| json!({}));
+            println!("  \x1b[2m· {name} {}\x1b[0m", compact(&args));
+            let result = if !seen_calls.insert(format!("{name}:{}", args)) {
+                repeats += 1;
+                // exact repeat — don't re-execute; tell the model to change course
+                "You already made this exact tool call and saw its result. Repeating it will not change anything. Take a DIFFERENT action, or answer the user with what you know (including telling them something was not found)."
+                    .to_string()
+            } else {
+                session.execute(name, &args)
+            };
+            history.push(json!({ "role": "tool", "tool_call_id": id, "content": cap_result(result) }));
+        }
+        if repeats >= 3 {
+            println!("\n[stopped: the model kept repeating the same tool call — it's stuck. Try rephrasing.]");
+            return;
+        }
+    }
+    println!("[stopped: hit max turns ({})]", cfg.max_turns);
+}
+
+/// Read the SSE stream: print assistant text live (thinking dimmed), accumulate
+/// the (possibly chunked) tool-call deltas, and return the full text + assembled
+/// tool calls. Prints a tok/s stats line from llama-server's timings (or usage +
+/// wall time as a fallback).
+fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
+    let mut content = String::new();
+    let mut tool_calls: Vec<Value> = vec![];
+    let mut printed = false;
+    let mut thinking = false; // currently inside dim reasoning output
+    let started = std::time::Instant::now();
+    let mut completion_tokens: Option<u64> = None;
+    let mut server_tps: Option<f64> = None;
+    let reader = BufReader::new(resp);
+    for line in reader.lines().map_while(Result::ok) {
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
+            break;
+        }
+        let Ok(chunk) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        // usage/timings ride the final chunk (choices empty) when include_usage is set
+        if let Some(u) = chunk["usage"]["completion_tokens"].as_u64() {
+            completion_tokens = Some(u);
+        }
+        if let Some(t) = chunk["timings"]["predicted_per_second"].as_f64() {
+            server_tps = Some(t);
+        }
+        let delta = &chunk["choices"][0]["delta"];
+        // hybrid-thinking models stream reasoning separately — show it dim
+        if let Some(r) = delta["reasoning_content"].as_str() {
+            if !r.is_empty() {
+                if !thinking {
+                    print!("\x1b[2m");
+                    thinking = true;
+                }
+                print!("{r}");
+                io::stdout().flush().ok();
+                printed = true;
+            }
+        }
+        if let Some(t) = delta["content"].as_str() {
+            if !t.is_empty() {
+                if thinking {
+                    print!("\x1b[0m\n\n"); // close dim thinking before the answer
+                    thinking = false;
+                }
+                print!("{t}");
+                io::stdout().flush().ok();
+                content.push_str(t);
+                printed = true;
+            }
+        }
+        if let Some(tcs) = delta["tool_calls"].as_array() {
+            for tc in tcs {
+                let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                while tool_calls.len() <= idx {
+                    tool_calls.push(json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
+                }
+                let slot = &mut tool_calls[idx];
+                if let Some(id) = tc["id"].as_str() {
+                    if !id.is_empty() {
+                        slot["id"] = json!(id);
+                    }
+                }
+                if let Some(n) = tc["function"]["name"].as_str() {
+                    if !n.is_empty() {
+                        slot["function"]["name"] = json!(n);
+                    }
+                }
+                if let Some(a) = tc["function"]["arguments"].as_str() {
+                    let prev = slot["function"]["arguments"].as_str().unwrap_or("").to_string();
+                    slot["function"]["arguments"] = json!(prev + a);
+                }
+            }
+        }
+    }
+    // drop empty accumulator slots the model never filled
+    tool_calls.retain(|t| !t["function"]["name"].as_str().unwrap_or("").is_empty());
+    if thinking {
+        print!("\x1b[0m"); // never leave the terminal dimmed
+    }
+    if printed {
+        println!();
+    }
+    // tok/s: prefer llama-server's own measurement, else usage ÷ wall time
+    let tps = server_tps.or_else(|| {
+        completion_tokens.map(|n| n as f64 / started.elapsed().as_secs_f64().max(0.001))
+    });
+    if let (Some(n), Some(tps)) = (completion_tokens, tps) {
+        println!("\x1b[2m  ⏱ {n} tok · {tps:.1} tok/s\x1b[0m");
+    }
+    (content, tool_calls)
+}
+
+fn compact(v: &Value) -> String {
+    let s = v.to_string();
+    if s.chars().count() > 100 {
+        format!("{}…", s.chars().take(100).collect::<String>())
+    } else {
+        s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_result_truncates_and_notes() {
+        let out = cap_result("z".repeat(10_000));
+        assert!(out.chars().count() < TOOL_RESULT_CAP + 200, "len {}", out.chars().count());
+        assert!(out.contains("truncated"));
+        assert_eq!(cap_result("short".into()), "short");
+    }
+
+    #[test]
+    fn fit_context_keeps_system_and_fits_budget() {
+        let big = "x".repeat(5_000);
+        let mut h = vec![
+            json!({"role":"system","content":"sys"}),
+            json!({"role":"user","content":big}),
+            json!({"role":"assistant","content":"a1"}),
+            json!({"role":"user","content":"q2"}),
+            json!({"role":"assistant","content":"recent"}),
+        ];
+        fit_context(&mut h, 3_000);
+        assert_eq!(h[0]["role"], "system", "system must survive");
+        let total: usize = h.iter().map(|m| m.to_string().len()).sum();
+        assert!(total <= 3_200, "must fit budget, got {total}");
+        assert_eq!(h.last().unwrap()["content"], "recent", "recent turn kept");
+    }
+
+    // Dropping happens by whole turn, so a tool result can never be left without
+    // its preceding assistant tool_call (which the server would reject).
+    #[test]
+    fn fit_context_never_orphans_a_tool_result() {
+        let big = "y".repeat(6_000);
+        let mut h = vec![
+            json!({"role":"system","content":"sys"}),
+            json!({"role":"user","content":"q1"}),
+            json!({"role":"assistant","tool_calls":[{"id":"c1","function":{"name":"glob","arguments":"{}"}}]}),
+            json!({"role":"tool","tool_call_id":"c1","content":big}),
+            json!({"role":"user","content":"q2"}),
+            json!({"role":"assistant","content":"a2"}),
+        ];
+        fit_context(&mut h, 2_000);
+        let orphan = h
+            .iter()
+            .enumerate()
+            .any(|(i, m)| m["role"] == "tool" && (i == 0 || h[i - 1]["role"] != "assistant"));
+        assert!(!orphan, "tool result orphaned: {h:?}");
+    }
+}

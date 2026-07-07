@@ -1,0 +1,10 @@
+# Rust build output
+/target
+
+# scratch playground (disposable demo files)
+/scratch
+
+# local reference copies of opencode source (see NOTICE for attribution)
+/reference
+
+*.log
