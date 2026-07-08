@@ -60,10 +60,15 @@ Then talk to it at the `›` prompt:
 /exit    quit
 ```
 
-### Windows launcher
+### Launcher scripts
 
-`openharn.cmd <dir>` starts a local MiniCPM server (if not running) and opens the
-REPL. Add `-Think` (via `openharn.ps1`) to enable the model's reasoning mode.
+Convenience wrappers that start a local llama-server (if one isn't already running)
+and open the REPL:
+
+- **Linux / macOS:** `./openharn.sh <dir>` (add `--think` for reasoning mode)
+- **Windows:** `openharn.cmd <dir>` (or `openharn.ps1 <dir> -Think`)
+
+Override the model/binary via env vars (`OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHARN_PORT`).
 
 ## Configuration
 
