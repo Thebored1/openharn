@@ -102,6 +102,8 @@ Override via env: `OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHARN_PORT`.
 
 ## Picking a model (CPU)
 
+- **Best in testing:** `LFM2.5-8B-A1B-APEX-I-Compact` (4/4 tools; best speed × size ×
+  reasoning balance). Add `OPENHARN_NO_THINK=1` for ~3× faster turns.
 - **Tool-calling is the gating capability**, and it tracks the model *family /
   post-training*, not the quant tier. Prefer **LFM2.5** builds or a **tool-tuned**
   model.

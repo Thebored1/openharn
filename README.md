@@ -47,6 +47,14 @@ of scope.
 - **Circuit breaker** — hard-stops a model that gets stuck repeating the same call.
 - **Local or cloud** — any OpenAI-compatible endpoint via `base_url` + optional key.
 
+## Recommended model
+
+Best in testing so far (CPU, from the [benchmark](docs/small-model-tool-calling.md)):
+**`LFM2.5-8B-A1B-APEX-I-Compact`** — reliably emits tool calls (4/4 on the scenario),
+the best balance of speed × size × reasoning of the tested set. Run it reasoning-off
+(`OPENHARN_NO_THINK=1`) for ~3× faster turns on CPU. Avoid the `LFM2-v2 8B-A1B` base —
+it won't emit tool calls at any quant.
+
 ## Quick start
 
 ```sh
