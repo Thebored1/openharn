@@ -57,6 +57,9 @@ BASE = None  # set in main
 REQ_TIMEOUT = 150      # seconds per HTTP request
 MAX_TOOL_ITERS = 4     # tool-loop iterations per user turn
 MAX_TOKENS = 1024      # cap so a runaway thinker still terminates a turn
+REASONING_OFF = False  # --reasoning-off: inject a closed <think></think> prefill (LFM2.5 no-think)
+THINK_PREFILL = "<think></think>"
+REPORT_STEM = "results"  # writes bench_logs/<stem>.{json,md}
 
 
 # ============================ scratch project =================================
@@ -254,8 +257,12 @@ THINK_RX = re.compile(r"<think>(.*?)</think>", re.S)
 
 def chat(history, schemas):
     """One request. Returns (message, metrics, error_or_None)."""
+    # Reasoning-off: prime the assistant turn with a closed <think></think> block so
+    # llama-server continues from an already-finished think state. Sent only, never
+    # stored in history.
+    msgs = history + [{"role": "assistant", "content": THINK_PREFILL}] if REASONING_OFF else history
     body = json.dumps({
-        "model": "bench", "messages": history, "tools": schemas,
+        "model": "bench", "messages": msgs, "tools": schemas,
         "tool_choice": "auto", "temperature": 0.2, "stream": False,
         "max_tokens": MAX_TOKENS,
     }).encode()
@@ -345,13 +352,18 @@ def run_scenario(agg, label):
 
 
 def main():
-    global BASE, PORT
+    global BASE, PORT, REASONING_OFF, REPORT_STEM
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--only", default="", help="substring filter on model label")
+    ap.add_argument("--reasoning-off", action="store_true",
+                    help="inject a closed <think></think> prefill; writes to results_noreason.*")
     args = ap.parse_args()
     PORT = args.port
     BASE = f"http://127.0.0.1:{PORT}"
+    if args.reasoning_off:
+        REASONING_OFF = True
+        REPORT_STEM = "results_noreason"
 
     # dump openharn's tool schemas once (from the running binary's source of truth
     # we hand-mirror them here to keep the harness self-contained)
@@ -362,7 +374,7 @@ def main():
     # merge with any prior results so an incremental `--only` run folds in without
     # clobbering the other models' numbers.
     prior = {}
-    pj = logdir / "results.json"
+    pj = logdir / f"{REPORT_STEM}.json"
     if pj.exists():
         try:
             for r in json.loads(pj.read_text(encoding="utf-8")):
@@ -406,7 +418,7 @@ def main():
         _write_report(ordered(), logdir)
 
     _write_report(ordered(), logdir)
-    print(f"\nreport written to {logdir/'results.json'} and {logdir/'results.md'}")
+    print(f"\nreport written to {logdir/(REPORT_STEM+'.json')} and {logdir/(REPORT_STEM+'.md')}")
 
 
 def _tps(agg):
@@ -422,7 +434,7 @@ def _emit(agg):
 
 def _write_report(results, logdir):
     clean = [{k: v for k, v in r.items() if k != "_schemas"} for r in results]
-    (logdir / "results.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
+    (logdir / f"{REPORT_STEM}.json").write_text(json.dumps(clean, indent=2), encoding="utf-8")
     rows = ["| Model | Load s | Reqs | Failed | Time s | Tok/s | Compl.tok | Think tok | Tool hits | Task |",
             "|---|---|---|---|---|---|---|---|---|---|"]
     for r in clean:
@@ -431,7 +443,7 @@ def _write_report(results, logdir):
         rows.append(f"| {r['label']} | {r.get('load_s')} | {r['requests']} | {r['failed']} | "
                     f"{round(r['latency'],1)} | {tps} | {r['completion_tokens']} | {r['think_tokens']} | "
                     f"{r['tool_hits']}/{r['expected_tools']} | {'PASS' if r.get('task_ok') else status} |")
-    (logdir / "results.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    (logdir / f"{REPORT_STEM}.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
 # openharn's 10 tool schemas (mirrored from src/tools.rs::schemas)

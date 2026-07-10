@@ -1,0 +1,36 @@
+[
+  {
+    "label": "LFM2.5-8B-APEX-Compact",
+    "file": "LFM2.5-8B-A1B-APEX-I-Compact.gguf",
+    "requests": 10,
+    "failed": 0,
+    "latency": 26.109198331832886,
+    "completion_tokens": 195,
+    "think_tokens": 0,
+    "pred_n": 195,
+    "pred_ms": 7133.6810000000005,
+    "tool_hits": 4,
+    "expected_tools": 4,
+    "errors": [],
+    "task_ok": true,
+    "load_ok": true,
+    "load_s": 3.1
+  },
+  {
+    "label": "LFM2.5-8B-APEX-Mini",
+    "file": "LFM2.5-8B-A1B-APEX-I-Mini.gguf",
+    "requests": 10,
+    "failed": 0,
+    "latency": 28.982560873031616,
+    "completion_tokens": 212,
+    "think_tokens": 0,
+    "pred_n": 212,
+    "pred_ms": 9634.162,
+    "tool_hits": 3,
+    "expected_tools": 4,
+    "errors": [],
+    "task_ok": true,
+    "load_ok": true,
+    "load_s": 5.1
+  }
+]

@@ -1,0 +1,10 @@
+
+=== LFM2.5-8B-APEX-Compact : loading ===
+    loaded in 3.1s; running scenario ...
+    [LFM2.5-8B-APEX-Compact] reqs=10 failed=0 time=26.1s tok/s=27.3 think_tok=0 tool_hits=4/4 task_ok=True
+
+=== LFM2.5-8B-APEX-Mini : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2.5-8B-APEX-Mini] reqs=10 failed=0 time=29.0s tok/s=22.0 think_tok=0 tool_hits=3/4 task_ok=True
+
+report written to C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results_noreason.json and C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results_noreason.md
