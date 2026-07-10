@@ -82,13 +82,24 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     // stuck. The soft "you already did this" nudge isn't always enough for a tiny
     // model, so hard-stop after a few repeats instead of burning every turn.
     let mut repeats = 0usize;
+    // Reasoning-off: with OPENHARN_NO_THINK set, prime each request with a closed
+    // <think></think> assistant turn so a hybrid-thinking model (LFM2.5) continues from
+    // an already-finished think state and skips reasoning — much faster on CPU. The
+    // prefill is sent only, never stored in `history`.
+    let no_think = std::env::var_os("OPENHARN_NO_THINK").is_some();
 
     for _ in 0..cfg.max_turns {
         // Keep the conversation within the model's context before every request.
         fit_context(history, budget);
+        let mut messages = Value::Array(history.clone());
+        if no_think {
+            if let Some(arr) = messages.as_array_mut() {
+                arr.push(json!({ "role": "assistant", "content": "<think></think>" }));
+            }
+        }
         let body = json!({
             "model": cfg.model,
-            "messages": history,
+            "messages": messages,
             "tools": tools::schemas(),
             "tool_choice": "auto",
             "temperature": cfg.temperature,
@@ -130,7 +141,7 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             return;
         }
 
-        let (content, tool_calls) = stream_response(resp);
+        let (content, tool_calls) = stream_response(resp, no_think);
 
         // Record the assistant turn so the next turn's context stays coherent (and
         // the KV-cache prefix stable).
@@ -173,7 +184,7 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
 /// the (possibly chunked) tool-call deltas, and return the full text + assembled
 /// tool calls. Prints a tok/s stats line from llama-server's timings (or usage +
 /// wall time as a fallback).
-fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
+fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String, Vec<Value>) {
     let mut content = String::new();
     let mut tool_calls: Vec<Value> = vec![];
     let mut printed = false;
@@ -242,20 +253,38 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
         }
         if let Some(t) = delta["content"].as_str() {
             if !t.is_empty() {
-                if live {
-                    print!("\r\x1b[K"); // erase the live thinking line before the answer
-                    live = false;
-                }
-                if thinking {
-                    print!("\x1b[0m\n\n"); // close dim thinking before the answer
-                    thinking = false;
-                }
-                reply_start.get_or_insert_with(std::time::Instant::now);
-                reply_tokens += 1;
-                print!("{t}");
-                io::stdout().flush().ok();
                 content.push_str(t);
-                printed = true;
+                if no_think {
+                    // Reasoning-off: the model still leaks a (shortened) chain-of-thought
+                    // into the content with stray <think> tags. Suppress it live behind the
+                    // meter; it's cleaned out of `content` after the stream.
+                    think_start.get_or_insert_with(std::time::Instant::now);
+                    think_tokens += 1;
+                    if last_meter.elapsed().as_millis() >= 120 {
+                        let secs = think_start.unwrap().elapsed().as_secs_f64().max(0.001);
+                        print!(
+                            "\r\x1b[2m  working… {think_tokens} tok · {secs:.1}s · {:.0} tok/s\x1b[0m\x1b[K",
+                            think_tokens as f64 / secs
+                        );
+                        io::stdout().flush().ok();
+                        live = true;
+                        last_meter = std::time::Instant::now();
+                    }
+                } else {
+                    if live {
+                        print!("\r\x1b[K"); // erase the live thinking line before the answer
+                        live = false;
+                    }
+                    if thinking {
+                        print!("\x1b[0m\n\n"); // close dim thinking before the answer
+                        thinking = false;
+                    }
+                    reply_start.get_or_insert_with(std::time::Instant::now);
+                    reply_tokens += 1;
+                    print!("{t}");
+                    io::stdout().flush().ok();
+                    printed = true;
+                }
             }
         }
         if let Some(tcs) = delta["tool_calls"].as_array() {
@@ -285,12 +314,18 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
     // drop empty accumulator slots the model never filled
     tool_calls.retain(|t| !t["function"]["name"].as_str().unwrap_or("").is_empty());
     if live {
-        print!("\r\x1b[K"); // erase the live thinking line (e.g. a tool-only turn)
+        print!("\r\x1b[K"); // erase the live thinking/working line
     }
     if thinking {
         print!("\x1b[0m"); // never leave the terminal dimmed
     }
-    if printed {
+    if no_think {
+        // strip the leaked reasoning, keep only the real answer, and print it clean
+        content = strip_think(&content);
+        if !content.is_empty() {
+            println!("{content}");
+        }
+    } else if printed {
         println!();
     }
     let end = std::time::Instant::now();
@@ -304,8 +339,9 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
         let ts = think_start.unwrap_or(started);
         let think_end = reply_start.unwrap_or(end);
         let secs = (think_end - ts).as_secs_f64().max(0.001);
+        let label = if no_think { "gen" } else { "think" };
         parts.push(format!(
-            "think {think_tokens} tok · {secs:.1}s · {:.0} tok/s",
+            "{label} {think_tokens} tok · {secs:.1}s · {:.0} tok/s",
             think_tokens as f64 / secs
         ));
     }
@@ -331,6 +367,17 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
         println!("\x1b[2m  total {:.1}s\x1b[0m", (end - started).as_secs_f64());
     }
     (content, tool_calls)
+}
+
+/// In reasoning-off mode a hybrid-thinking model still leaks a (shortened) chain of
+/// thought into the content wrapped in stray `<think>…</think>` tags. Keep only the
+/// real answer: everything after the last `</think>`, with any tags removed.
+fn strip_think(s: &str) -> String {
+    let tail = match s.rfind("</think>") {
+        Some(i) => &s[i + "</think>".len()..],
+        None => s,
+    };
+    tail.replace("<think>", "").replace("</think>", "").trim().to_string()
 }
 
 fn compact(v: &Value) -> String {

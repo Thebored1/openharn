@@ -34,6 +34,7 @@ $env:OPENHARN_BASE_URL="http://127.0.0.1:8080/v1"
 | `OPENHARN_MODEL` | `local` | model name sent in the request |
 | `OPENHARN_API_KEY` | *(none)* | bearer token, for cloud providers |
 | `OPENHARN_SHOW_THINKING` | *(unset)* | set to `1` to stream the raw chain-of-thought instead of the collapsed live meter |
+| `OPENHARN_NO_THINK` | *(unset)* | set to `1` for **reasoning-off** — primes a closed `<think></think>` per turn so a hybrid-thinking model (LFM2.5) skips most reasoning. Much faster on CPU; some quality trade-off. |
 
 First CLI arg = the working directory the agent operates on (default: cwd).
 
