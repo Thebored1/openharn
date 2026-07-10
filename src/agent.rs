@@ -194,6 +194,7 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
     // show only the answer. Set OPENHARN_SHOW_THINKING=1 to see the raw reasoning.
     let show_thinking = std::env::var_os("OPENHARN_SHOW_THINKING").is_some();
     let mut live = false; // a live one-line thinking meter is currently on screen
+    let mut answer_started = false; // no-think: leaked reasoning closed, now streaming the answer
     let started = std::time::Instant::now();
     let mut completion_tokens: Option<u64> = None;
     let mut server_tps: Option<f64> = None;
@@ -256,19 +257,40 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                 content.push_str(t);
                 if no_think {
                     // Reasoning-off: the model still leaks a (shortened) chain-of-thought
-                    // into the content with stray <think> tags. Suppress it live behind the
-                    // meter; it's cleaned out of `content` after the stream.
-                    think_start.get_or_insert_with(std::time::Instant::now);
-                    think_tokens += 1;
-                    if last_meter.elapsed().as_millis() >= 120 {
-                        let secs = think_start.unwrap().elapsed().as_secs_f64().max(0.001);
-                        print!(
-                            "\r\x1b[2m  working… {think_tokens} tok · {secs:.1}s · {:.0} tok/s\x1b[0m\x1b[K",
-                            think_tokens as f64 / secs
-                        );
+                    // into the content with stray <think> tags (an echoed <think></think>
+                    // then reasoning then a real </think>). Suppress it behind the meter, and
+                    // once the reasoning closes (2nd </think>) start streaming the answer live.
+                    if answer_started {
+                        reply_tokens += 1;
+                        print!("{t}");
                         io::stdout().flush().ok();
-                        live = true;
-                        last_meter = std::time::Instant::now();
+                        printed = true;
+                    } else if content.matches("</think>").count() >= 2 {
+                        answer_started = true;
+                        if live {
+                            print!("\r\x1b[K");
+                            live = false;
+                        }
+                        reply_start.get_or_insert_with(std::time::Instant::now);
+                        let ans = strip_think(&content); // answer produced so far
+                        if !ans.is_empty() {
+                            print!("{ans}");
+                            io::stdout().flush().ok();
+                            printed = true;
+                        }
+                    } else {
+                        think_start.get_or_insert_with(std::time::Instant::now);
+                        think_tokens += 1;
+                        if last_meter.elapsed().as_millis() >= 120 {
+                            let secs = think_start.unwrap().elapsed().as_secs_f64().max(0.001);
+                            print!(
+                                "\r\x1b[2m  thinking… {think_tokens} tok · {secs:.1}s · {:.0} tok/s\x1b[0m\x1b[K",
+                                think_tokens as f64 / secs
+                            );
+                            io::stdout().flush().ok();
+                            live = true;
+                            last_meter = std::time::Instant::now();
+                        }
                     }
                 } else {
                     if live {
@@ -320,11 +342,15 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
         print!("\x1b[0m"); // never leave the terminal dimmed
     }
     if no_think {
-        // strip the leaked reasoning, keep only the real answer, and print it clean
-        content = strip_think(&content);
-        if !content.is_empty() {
-            println!("{content}");
+        let clean = strip_think(&content);
+        if answer_started {
+            if printed {
+                println!(); // answer already streamed live; close the line
+            }
+        } else if !clean.is_empty() {
+            println!("{clean}"); // reasoning never resolved to a streamed answer — print it
         }
+        content = clean; // store only the clean answer in history
     } else if printed {
         println!();
     }
@@ -339,9 +365,8 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
         let ts = think_start.unwrap_or(started);
         let think_end = reply_start.unwrap_or(end);
         let secs = (think_end - ts).as_secs_f64().max(0.001);
-        let label = if no_think { "gen" } else { "think" };
         parts.push(format!(
-            "{label} {think_tokens} tok · {secs:.1}s · {:.0} tok/s",
+            "think {think_tokens} tok · {secs:.1}s · {:.0} tok/s",
             think_tokens as f64 / secs
         ));
     }
