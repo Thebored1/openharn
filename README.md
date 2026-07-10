@@ -69,6 +69,8 @@ Then talk to it at the `›` prompt:
 /exit    quit
 ```
 
+One-page reference: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md).
+
 ### Launcher scripts
 
 Convenience wrappers that start a local llama-server (if one isn't already running)
