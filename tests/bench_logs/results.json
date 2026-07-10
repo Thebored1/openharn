@@ -1,22 +1,5 @@
 [
   {
-    "label": "LFM2-1.2B-Tool",
-    "file": "LFM2-1.2B-Tool-Q4_K_M.gguf",
-    "requests": 9,
-    "failed": 0,
-    "latency": 18.48413634300232,
-    "completion_tokens": 310,
-    "think_tokens": 0,
-    "pred_n": 310,
-    "pred_ms": 9241.701999999997,
-    "tool_hits": 3,
-    "expected_tools": 4,
-    "errors": [],
-    "task_ok": true,
-    "load_ok": true,
-    "load_s": 3.0
-  },
-  {
     "label": "LFM2-8B-A1B-Q3_K_S",
     "file": "LFM2-8B-A1B-Q3_K_S.gguf",
     "requests": 5,
@@ -66,23 +49,6 @@
     "task_ok": false,
     "load_ok": true,
     "load_s": 5.1
-  },
-  {
-    "label": "LFM2.5-1.2B-Instruct",
-    "file": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
-    "requests": 11,
-    "failed": 0,
-    "latency": 16.156081199645996,
-    "completion_tokens": 226,
-    "think_tokens": 0,
-    "pred_n": 226,
-    "pred_ms": 6743.7570000000005,
-    "tool_hits": 3,
-    "expected_tools": 4,
-    "errors": [],
-    "task_ok": true,
-    "load_ok": true,
-    "load_s": 3.0
   },
   {
     "label": "LFM2.5-8B-APEX-Compact",
@@ -136,40 +102,6 @@
     "load_s": 6.1
   },
   {
-    "label": "gemma-3n-E2B-IQ3_XXS",
-    "file": "gemma-3n-E2B-it-UD-IQ3_XXS.gguf",
-    "requests": 5,
-    "failed": 0,
-    "latency": 20.304181337356567,
-    "completion_tokens": 80,
-    "think_tokens": 0,
-    "pred_n": 80,
-    "pred_ms": 9588.685,
-    "tool_hits": 0,
-    "expected_tools": 4,
-    "errors": [],
-    "task_ok": false,
-    "load_ok": true,
-    "load_s": 5.1
-  },
-  {
-    "label": "gemma-4-E2B-IQ4_XS",
-    "file": "gemma-4-E2B-it-IQ4_XS.gguf",
-    "requests": 8,
-    "failed": 0,
-    "latency": 69.44166851043701,
-    "completion_tokens": 517,
-    "think_tokens": 389,
-    "pred_n": 517,
-    "pred_ms": 54703.19299999999,
-    "tool_hits": 3,
-    "expected_tools": 4,
-    "errors": [],
-    "task_ok": true,
-    "load_ok": true,
-    "load_s": 7.1
-  },
-  {
     "label": "gemma-4-E2B-qat-Q4_KXL",
     "file": "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
     "requests": 5,
@@ -185,5 +117,39 @@
     "task_ok": false,
     "load_ok": true,
     "load_s": 6.1
+  },
+  {
+    "label": "granite-4.0-h-tiny",
+    "file": "granite-4.0-h-tiny-UD-Q4_K_XL.gguf",
+    "requests": 9,
+    "failed": 0,
+    "latency": 28.779963970184326,
+    "completion_tokens": 228,
+    "think_tokens": 0,
+    "pred_n": 228,
+    "pred_ms": 12730.979000000001,
+    "tool_hits": 3,
+    "expected_tools": 4,
+    "errors": [],
+    "task_ok": true,
+    "load_ok": true,
+    "load_s": 6.1
+  },
+  {
+    "label": "granite-3.1-1b-a400m",
+    "file": "granite-3.1-1b-a400m-instruct-Q8_0.gguf",
+    "requests": 5,
+    "failed": 0,
+    "latency": 18.063554048538208,
+    "completion_tokens": 442,
+    "think_tokens": 0,
+    "pred_n": 442,
+    "pred_ms": 12119.726999999999,
+    "tool_hits": 0,
+    "expected_tools": 4,
+    "errors": [],
+    "task_ok": false,
+    "load_ok": true,
+    "load_s": 3.0
   }
 ]

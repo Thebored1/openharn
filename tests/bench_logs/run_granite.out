@@ -1,0 +1,10 @@
+
+=== granite-4.0-h-tiny : loading ===
+    loaded in 6.1s; running scenario ...
+    [granite-4.0-h-tiny] reqs=9 failed=0 time=28.8s tok/s=17.9 think_tok=0 tool_hits=3/4 task_ok=True
+
+=== granite-3.1-1b-a400m : loading ===
+    loaded in 3.0s; running scenario ...
+    [granite-3.1-1b-a400m] reqs=5 failed=0 time=18.1s tok/s=36.5 think_tok=0 tool_hits=0/4 task_ok=False
+
+report written to C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.json and C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.md

@@ -31,6 +31,7 @@ SYSTEM = (ROOT / "src" / "prompt.txt").read_text(encoding="utf-8")
 #   LFM2-1.2B-Tool, LFM2.5-1.2B-Instruct  — the 1.2B tier hallucinates tool
 #     *results* instead of emitting real tool calls.
 #   gemma-3n-E2B-IQ3_XXS, gemma-4-E2B-IQ4_XS — dropped from the research set.
+#   granite-4.1-3b — excluded (dense 3B, slowest on CPU).
 MODELS = [
     ("LFM2-8B-A1B-Q3_K_S",    "LFM2-8B-A1B-Q3_K_S.gguf",          []),
     ("LFM2-8B-A1B-Q3_K_XL",   "LFM2-8B-A1B-UD-Q3_K_XL.gguf",      []),
@@ -39,6 +40,8 @@ MODELS = [
     ("LFM2.5-8B-APEX-Mini",   "LFM2.5-8B-A1B-APEX-I-Mini.gguf",   []),
     ("LFM2.5-8B-A1B-Q4_K_M",  "LFM2.5-8B-A1B-Q4_K_M.gguf",        []),
     ("gemma-4-E2B-qat-Q4_KXL","gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",[]),
+    ("granite-4.0-h-tiny",    "granite-4.0-h-tiny-UD-Q4_K_XL.gguf",[]),
+    ("granite-3.1-1b-a400m",  "granite-3.1-1b-a400m-instruct-Q8_0.gguf",[]),
 ]
 
 # ---- the scenario: identical for every model ---------------------------------
