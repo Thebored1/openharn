@@ -27,17 +27,17 @@ LLAMA = pathlib.Path(os.environ.get("LLAMA_SERVER",
 SYSTEM = (ROOT / "src" / "prompt.txt").read_text(encoding="utf-8")
 
 # ---- models: (label, filename, extra llama-server flags) ---------------------
+# Excluded per the user's instruction (unreliable / not worth the time):
+#   LFM2-1.2B-Tool, LFM2.5-1.2B-Instruct  — the 1.2B tier hallucinates tool
+#     *results* instead of emitting real tool calls.
+#   gemma-3n-E2B-IQ3_XXS, gemma-4-E2B-IQ4_XS — dropped from the research set.
 MODELS = [
-    ("LFM2-1.2B-Tool",        "LFM2-1.2B-Tool-Q4_K_M.gguf",       []),
     ("LFM2-8B-A1B-Q3_K_S",    "LFM2-8B-A1B-Q3_K_S.gguf",          []),
     ("LFM2-8B-A1B-Q3_K_XL",   "LFM2-8B-A1B-UD-Q3_K_XL.gguf",      []),
     ("LFM2-8B-A1B-Q4_K_XL",   "LFM2-8B-A1B-UD-Q4_K_XL.gguf",      []),
-    ("LFM2.5-1.2B-Instruct",  "LFM2.5-1.2B-Instruct-Q4_K_M.gguf", []),
     ("LFM2.5-8B-APEX-Compact","LFM2.5-8B-A1B-APEX-I-Compact.gguf",[]),
     ("LFM2.5-8B-APEX-Mini",   "LFM2.5-8B-A1B-APEX-I-Mini.gguf",   []),
     ("LFM2.5-8B-A1B-Q4_K_M",  "LFM2.5-8B-A1B-Q4_K_M.gguf",        []),
-    ("gemma-3n-E2B-IQ3_XXS",  "gemma-3n-E2B-it-UD-IQ3_XXS.gguf",  []),
-    ("gemma-4-E2B-IQ4_XS",    "gemma-4-E2B-it-IQ4_XS.gguf",       []),
     ("gemma-4-E2B-qat-Q4_KXL","gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",[]),
 ]
 
