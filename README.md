@@ -20,6 +20,13 @@ model (failed reads list what actually exists), edits are anchored (never reprin
 file), searches state their true scope, and the conversation is trimmed to fit the
 context — so the small model behaves.
 
+**Built for weak hardware.** The whole point is to run a *small* model as well as it
+can on a modest, **CPU-only** machine — no serious GPU required. openharn will happily
+talk to a GPU-backed or cloud endpoint, but that isn't the target: the defaults, the
+launcher scripts, and the [benchmarks](docs/small-model-tool-calling.md) all assume
+CPU inference (`llama-server -ngl 0`). If a change only helps on a big GPU, it's out
+of scope.
+
 ## Features
 
 - **10 tools:** `read`, `write`, `edit`, `multiedit`, `glob`, `grep`, `bash`,
@@ -44,8 +51,9 @@ context — so the small model behaves.
 ```sh
 cargo build
 
-# in one terminal, serve a model (e.g. with llama.cpp):
-llama-server -m your-model.gguf --jinja --ctx-size 16384 -ngl 99 --port 8080
+# in one terminal, serve a model (e.g. with llama.cpp). -ngl 0 = CPU-only, the
+# intended target; add GPU layers only if you explicitly want them:
+llama-server -m your-model.gguf --jinja --ctx-size 16384 -ngl 0 --port 8080
 
 # in another:
 OPENHARN_BASE_URL=http://127.0.0.1:8080/v1 cargo run -- .
