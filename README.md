@@ -101,6 +101,15 @@ Four files:
 
 No agent framework. Dependencies: `reqwest`, `serde`, `walkdir`, `regex`, `glob`.
 
+## Research
+
+[`docs/small-model-tool-calling.md`](docs/small-model-tool-calling.md) — a
+reproducible study of *why* some small models fail to call tools (with token-level
+evidence) and a same-prompt benchmark of eleven LFM / LFM2.5 / Gemma-E2B GGUF builds
+driven through openharn on CPU. TL;DR: tool-calling competence tracks the model
+family and post-training, not the quantization tier. The benchmark harness is
+[`tests/benchmark.py`](tests/benchmark.py); raw results live in `tests/bench_logs/`.
+
 ## Credits & license
 
 openharn is MIT licensed (see `LICENSE`).

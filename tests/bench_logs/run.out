@@ -1,0 +1,46 @@
+
+=== LFM2-1.2B-Tool : loading ===
+    loaded in 3.0s; running scenario ...
+    [LFM2-1.2B-Tool] reqs=9 failed=0 time=18.5s tok/s=33.5 think_tok=0 tool_hits=3/4 task_ok=True
+
+=== LFM2-8B-A1B-Q3_K_S : loading ===
+    loaded in 4.1s; running scenario ...
+    [LFM2-8B-A1B-Q3_K_S] reqs=5 failed=0 time=17.4s tok/s=26.2 think_tok=0 tool_hits=0/4 task_ok=False
+
+=== LFM2-8B-A1B-Q3_K_XL : loading ===
+    loaded in 4.1s; running scenario ...
+    [LFM2-8B-A1B-Q3_K_XL] reqs=5 failed=0 time=17.6s tok/s=24.4 think_tok=0 tool_hits=0/4 task_ok=False
+
+=== LFM2-8B-A1B-Q4_K_XL : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2-8B-A1B-Q4_K_XL] reqs=5 failed=0 time=15.0s tok/s=27.6 think_tok=0 tool_hits=0/4 task_ok=False
+
+=== LFM2.5-1.2B-Instruct : loading ===
+    loaded in 3.0s; running scenario ...
+    [LFM2.5-1.2B-Instruct] reqs=11 failed=0 time=16.2s tok/s=33.5 think_tok=0 tool_hits=3/4 task_ok=True
+
+=== LFM2.5-8B-APEX-Compact : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2.5-8B-APEX-Compact] reqs=9 failed=0 time=77.3s tok/s=22.8 think_tok=1089 tool_hits=4/4 task_ok=True
+
+=== LFM2.5-8B-APEX-Mini : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2.5-8B-APEX-Mini] reqs=10 failed=0 time=176.0s tok/s=21.6 think_tok=3084 tool_hits=3/4 task_ok=True
+
+=== LFM2.5-8B-A1B-Q4_K_M : loading ===
+    loaded in 6.1s; running scenario ...
+    [LFM2.5-8B-A1B-Q4_K_M] reqs=9 failed=0 time=89.4s tok/s=23.1 think_tok=1302 tool_hits=4/4 task_ok=True
+
+=== gemma-3n-E2B-IQ3_XXS : loading ===
+    loaded in 5.1s; running scenario ...
+    [gemma-3n-E2B-IQ3_XXS] reqs=5 failed=0 time=20.3s tok/s=8.3 think_tok=0 tool_hits=0/4 task_ok=False
+
+=== gemma-4-E2B-IQ4_XS : loading ===
+    loaded in 7.1s; running scenario ...
+    [gemma-4-E2B-IQ4_XS] reqs=8 failed=0 time=69.4s tok/s=9.5 think_tok=389 tool_hits=3/4 task_ok=True
+
+=== gemma-4-E2B-qat-Q4_KXL : loading ===
+    loaded in 6.1s; running scenario ...
+    [gemma-4-E2B-qat-Q4_KXL] reqs=5 failed=0 time=91.0s tok/s=9.2 think_tok=624 tool_hits=0/4 task_ok=False
+
+report written to C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.json and C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.md

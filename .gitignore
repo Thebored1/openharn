@@ -8,3 +8,10 @@
 /reference
 
 *.log
+
+# benchmark harness scratch
+/tests/__pycache__
+/tests/_schemas.json
+
+# local model weights
+*.gguf
