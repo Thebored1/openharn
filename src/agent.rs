@@ -141,7 +141,19 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             return;
         }
 
-        let (content, tool_calls) = stream_response(resp, no_think);
+        let (mut content, mut tool_calls) = stream_response(resp, no_think);
+
+        // Fallback tool-call parse: some models (e.g. Granite 3.x) emit a valid
+        // structured call as TEXT — `<tool_call>[{"name":…,"arguments":{…}}]` — that the
+        // server's parser (expecting a different trigger) leaves in `content`. Recover it
+        // so the harness dispatches the tool instead of stalling. Only runs when the
+        // native parse produced nothing, so it never overrides a real answer.
+        if tool_calls.is_empty() {
+            if let Some(parsed) = parse_text_tool_calls(&content) {
+                tool_calls = parsed;
+                content.clear(); // the content WAS the call, not an answer
+            }
+        }
 
         // Record the assistant turn so the next turn's context stays coherent (and
         // the KV-cache prefix stable).
@@ -195,6 +207,7 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
     let show_thinking = std::env::var_os("OPENHARN_SHOW_THINKING").is_some();
     let mut live = false; // a live one-line thinking meter is currently on screen
     let mut answer_started = false; // no-think: leaked reasoning closed, now streaming the answer
+    let mut hide_call: Option<bool> = None; // Some(true)=content is a text tool-call → don't display
     let started = std::time::Instant::now();
     let mut completion_tokens: Option<u64> = None;
     let mut server_tps: Option<f64> = None;
@@ -303,9 +316,28 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                     }
                     reply_start.get_or_insert_with(std::time::Instant::now);
                     reply_tokens += 1;
-                    print!("{t}");
-                    io::stdout().flush().ok();
-                    printed = true;
+                    // Suppress a text tool-call (Granite <tool_call>/<|tool_call|>) from the
+                    // display — run() parses & dispatches it. Buffer the head until we can tell.
+                    match hide_call {
+                        Some(true) => {} // a tool call in text form — keep it off-screen
+                        Some(false) => {
+                            print!("{t}");
+                            io::stdout().flush().ok();
+                            printed = true;
+                        }
+                        None => {
+                            let tr = content.trim_start();
+                            if tr.starts_with("<|tool_call|>") || tr.starts_with("<tool_call>") {
+                                hide_call = Some(true);
+                            } else if !"<|tool_call|>".starts_with(tr) && !"<tool_call>".starts_with(tr) {
+                                hide_call = Some(false);
+                                print!("{content}"); // flush the buffered head, then stream
+                                io::stdout().flush().ok();
+                                printed = true;
+                            }
+                            // else: still an ambiguous prefix — keep buffering, print nothing
+                        }
+                    }
                 }
             }
         }
@@ -394,6 +426,53 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
     (content, tool_calls)
 }
 
+/// Recover a structured tool call the server left as plain text. Handles the Granite
+/// family shape — an optional `<tool_call>` / `<|tool_call|>` marker followed by a JSON
+/// list `[{"name":…, "arguments":{…}}]` — and returns OpenAI-format tool_calls (with
+/// `arguments` as a JSON string, as the dispatcher expects). Returns None if `content`
+/// isn't a recognizable tool call, so a normal answer is never misread as one.
+fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
+    let mut s = content.trim();
+    for marker in ["<|tool_call|>", "<tool_call>"] {
+        if let Some(rest) = s.strip_prefix(marker) {
+            s = rest;
+            break;
+        }
+    }
+    let s = s.trim();
+    // isolate a JSON array `[…]` or a single object `{…}` (models emit both shapes)
+    let open = s.find(['[', '{'])?;
+    let is_arr = s.as_bytes()[open] == b'[';
+    let close = if is_arr { s.rfind(']')? } else { s.rfind('}')? };
+    if close < open {
+        return None;
+    }
+    let val: Value = serde_json::from_str(&s[open..=close]).ok()?;
+    let items: Vec<Value> = match val {
+        Value::Array(a) => a,
+        obj => vec![obj],
+    };
+    let mut calls = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        // tolerate an optional {"function": {…}} wrapper, and name/arguments vs
+        // name/parameters (Granite echoes the schema key `parameters`).
+        let f = item.get("function").unwrap_or(item);
+        let name = f.get("name").and_then(|v| v.as_str())?;
+        let args = f.get("arguments").or_else(|| f.get("parameters"));
+        let args_str = match args {
+            Some(a) if a.is_string() => a.as_str().unwrap_or("{}").to_string(),
+            Some(a) if !a.is_null() => a.to_string(),
+            _ => "{}".to_string(),
+        };
+        calls.push(json!({
+            "id": format!("call_{i}"),
+            "type": "function",
+            "function": { "name": name, "arguments": args_str }
+        }));
+    }
+    if calls.is_empty() { None } else { Some(calls) }
+}
+
 /// In reasoning-off mode a hybrid-thinking model still leaks a (shortened) chain of
 /// thought into the content wrapped in stray `<think>…</think>` tags. Keep only the
 /// real answer: everything after the last `</think>`, with any tags removed.
@@ -417,6 +496,40 @@ fn compact(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_granite_text_tool_call() {
+        // Granite emits a valid call as text that the server leaves in `content`.
+        let c = r#"<tool_call>[{"arguments": {"pattern": "src/**/*.rs"}, "name": "glob"}]"#;
+        let calls = parse_text_tool_calls(c).expect("should parse");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "glob");
+        // arguments must be a JSON *string* (what the dispatcher re-parses)
+        let args = calls[0]["function"]["arguments"].as_str().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(args).unwrap()["pattern"], "src/**/*.rs");
+    }
+
+    #[test]
+    fn parses_piped_marker_and_ignores_prose() {
+        assert!(parse_text_tool_calls(r#"<|tool_call|>[{"name":"read","arguments":{"path":"a"}}]"#).is_some());
+        // a normal answer must NOT be misread as a tool call
+        assert!(parse_text_tool_calls("The src directory contains agent.rs and main.rs.").is_none());
+        assert!(parse_text_tool_calls("").is_none());
+    }
+
+    #[test]
+    fn parses_object_echo_with_parameters() {
+        // Granite's other shape: a single object with a `function` wrapper and
+        // schema-style `parameters` (filled with real values) instead of `arguments`.
+        let c = r#"<tool_call>
+{"type":"function","function":{"name":"glob","parameters":{"pattern":"src/**/*.rs","scope":"project"}}}
+</tool_call>"#;
+        let calls = parse_text_tool_calls(c).expect("should parse object echo");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "glob");
+        let args: Value = serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(args["pattern"], "src/**/*.rs");
+    }
 
     #[test]
     fn cap_result_truncates_and_notes() {

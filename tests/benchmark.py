@@ -257,6 +257,43 @@ def count_tokens(text):
         return 0
 
 THINK_RX = re.compile(r"<think>(.*?)</think>", re.S)
+_MARKER_RX = re.compile(r"^\s*<\|?tool_call\|?>")
+
+def fallback_parse(content):
+    """Recover a text-emitted tool call the server left in `content` (Granite shape):
+    an optional <tool_call>/<|tool_call|> marker + a JSON list or object, with
+    name/arguments or a {function:{name, parameters}} wrapper. Mirrors openharn's
+    parse_text_tool_calls in src/agent.rs."""
+    if not content:
+        return None
+    s = _MARKER_RX.sub("", content).strip()
+    oi = next((i for i, ch in enumerate(s) if ch in "[{"), None)
+    if oi is None:
+        return None
+    is_arr = s[oi] == "["
+    ci = s.rfind("]") if is_arr else s.rfind("}")
+    if ci < oi:
+        return None
+    try:
+        val = json.loads(s[oi:ci + 1])
+    except Exception:
+        return None
+    items = val if isinstance(val, list) else [val]
+    calls = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        f = item["function"] if isinstance(item.get("function"), dict) else item
+        name = f.get("name")
+        if not isinstance(name, str):
+            continue
+        args = f.get("arguments")
+        if args is None:
+            args = f.get("parameters")
+        args_str = args if isinstance(args, str) else ("{}" if args is None else json.dumps(args))
+        calls.append({"id": f"call_{i}", "type": "function",
+                      "function": {"name": name, "arguments": args_str}})
+    return calls or None
 
 def chat(history, schemas):
     """One request. Returns (message, metrics, error_or_None)."""
@@ -327,6 +364,12 @@ def run_scenario(agg, label):
             agg["think_tokens"] += m["think_tokens"]
             agg["pred_n"] += m["pred_n"]
             agg["pred_ms"] += m["pred_ms"]
+            # fallback: recover a text-emitted tool call the server left in content
+            if not msg.get("tool_calls"):
+                parsed = fallback_parse(msg.get("content") or "")
+                if parsed:
+                    msg["tool_calls"] = parsed
+                    msg["content"] = None
             # record assistant turn
             a = {"role": "assistant", "content": msg.get("content") or None}
             if msg.get("tool_calls"):

@@ -412,6 +412,47 @@ prefill rather than fighting a template flag that does nothing.
 
 ---
 
+## Addendum — text-emitted tool calls, and an a400m correction
+
+A later probe of `granite-3.1-1b-a400m` (Q8_0) — the fastest model tested (~38 tok/s) —
+overturned an earlier hasty conclusion and produced a harness improvement.
+
+**Symptom.** In the benchmark it scored 0/4, and it was first written off as "400M
+active params is too thin to call tools." Wrong. Direct probes showed it *does* emit a
+valid structured call — the server just doesn't parse it:
+
+```
+content:  <tool_call>[{"arguments": {"pattern": "src/**/*.rs"}, "name": "glob"}]
+tool_calls: null
+```
+
+**Cause.** The Granite-3.1 template instructs the model to trigger with the special
+token `<|tool_call|>`, but the model emits plain `<tool_call>`. llama.cpp's `peg-native`
+parser is looking for the former, so it drops a perfectly valid call to plain text —
+the same *class* of failure as LFM2, but here the payload is a real structured call one
+regex away from working. (Granite-4.0 h-tiny uses a shape llama.cpp *does* parse, which
+is why it scored 3/4.)
+
+**Fix.** openharn now has a **tool-call recovery** fallback (`parse_text_tool_calls` in
+`src/agent.rs`, mirrored in the benchmark): when the native parse yields nothing, it
+extracts a `<tool_call>`/`<|tool_call|>` marker + JSON (list *or* object, tolerating a
+`{function:{…}}` wrapper and `arguments`-vs-`parameters`) and dispatches it. It fires
+only on an otherwise-empty parse, so a normal answer is never misread.
+
+**Corrected verdict.** With the fallback recovering its calls, a400m *dispatches* —
+but still scores 0/4. It's inconsistent about its output shape and frequently fills
+arguments with the tool's *schema* instead of real values, or picks the wrong tool. So
+the original outcome (unusable for agentic work) held, but the reason was wrong: **not
+"too small to attempt tools" — too unreliable at *which* tool and *what* arguments.**
+The harness was masking a genuine model weakness *and* had a real gap of its own; both
+are now understood, and the gap is closed.
+
+**Takeaways.** (1) A 0/4 can be harness *or* model — verify which before concluding.
+(2) The "active-param floor for tool use" framing was too crude; format/selection
+reliability is a separate axis from raw capability. (3) Recovering text-emitted
+structured calls is cheap and family-agnostic; recovering an unstructured Markdown
+fence (LFM2-v2) is not, and remains unsolved.
+
 ### Appendix A — model manifest
 
 | File | Params (active) | Quant | Size | Family |

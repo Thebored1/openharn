@@ -1,0 +1,20 @@
+
+=== granite-3.1-1b-a400m : loading ===
+    loaded in 2.0s; running scenario ...
+    [granite-3.1-1b-a400m] reqs=6 failed=0 time=13.7s tok/s=38.0 think_tok=0 tool_hits=0/4 task_ok=False
+
+report written to C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.json and C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.md
+
+=== LFM2-8B-A1B-Q3_K_S : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2-8B-A1B-Q3_K_S] reqs=5 failed=0 time=15.4s tok/s=29.2 think_tok=0 tool_hits=0/4 task_ok=False
+
+=== LFM2-8B-A1B-Q3_K_XL : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2-8B-A1B-Q3_K_XL] reqs=5 failed=0 time=15.7s tok/s=27.8 think_tok=0 tool_hits=0/4 task_ok=False
+
+=== LFM2-8B-A1B-Q4_K_XL : loading ===
+    loaded in 5.1s; running scenario ...
+    [LFM2-8B-A1B-Q4_K_XL] reqs=5 failed=0 time=16.7s tok/s=24.8 think_tok=0 tool_hits=0/4 task_ok=False
+
+report written to C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.json and C:\Users\Paper\StudioProjects\openharn\tests\bench_logs\results.md

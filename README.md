@@ -45,6 +45,9 @@ of scope.
 - **Context management** — tool results are capped and the conversation is trimmed to
   fit the model's window (with a retry on overflow).
 - **Circuit breaker** — hard-stops a model that gets stuck repeating the same call.
+- **Tool-call recovery** — if the server leaves a structured tool call as *text* (e.g.
+  Granite's `<tool_call>[{…}]` / `<|tool_call|>`, which llama.cpp may not parse),
+  openharn recovers and dispatches it instead of stalling.
 - **Local or cloud** — any OpenAI-compatible endpoint via `base_url` + optional key.
 
 ## Recommended model

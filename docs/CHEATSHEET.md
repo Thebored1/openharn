@@ -124,6 +124,9 @@ Override via env: `OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHARN_PORT`.
   indentation/escaping drifted, so the model never reprints a whole file.
 - **Circuit breaker** — an exact-repeat tool call isn't re-run; 3 repeats hard-stops a
   stuck model.
+- **Tool-call recovery** — a structured tool call the server left as text
+  (`<tool_call>[…]` / `<|tool_call|>`, Granite-style; list or object shape) is parsed
+  and dispatched instead of stalling. Only fires when the native parse found nothing.
 - **Context fit** — tool results are capped and the oldest whole turns are dropped to
   fit the model's window (with a retry that shrinks further on a 400 overflow).
 
@@ -134,7 +137,7 @@ Override via env: `OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHARN_PORT`.
 | Symptom | Fix |
 |---|---|
 | `ggml_vulkan: ErrorOutOfDeviceMemory` on load | You offloaded to a GPU that can't fit the model. Use **`-ngl 0`** (CPU) — the intended target. |
-| Model answers in prose / never calls tools | The model isn't emitting structured tool calls — use an LFM2.5 or tool-tuned model (see *Picking a model*). |
+| Model answers in prose / never calls tools | The model isn't emitting structured tool calls — use an LFM2.5 or tool-tuned model (see *Picking a model*). openharn already recovers *text-emitted structured* calls (Granite `<tool_call>`); it can't recover a Markdown ```` ```bash ```` fence (LFM2-v2). |
 | `[stopped: … kept repeating the same tool call]` | Circuit breaker fired; rephrase the request. |
 | Turns feel slow | Most of the wall-clock is *thinking* tokens, not slow inference — a smaller/less-reasoning model helps more than tuning llama.cpp. |
 | Stop the server | `taskkill /F /IM llama-server.exe` (Windows) · `pkill llama-server` (Unix) |
