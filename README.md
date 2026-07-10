@@ -39,8 +39,9 @@ of scope.
 - **Project + whole-system search** — `glob`/`grep` default to the project; pass
   `scope:"system"` to search every drive (openharn resolves the roots, so the model
   never has to produce a `C:\` path).
-- **Streaming output** with dimmed reasoning for hybrid-thinking models, plus a live
-  **tokens/sec** readout.
+- **Live meter + per-phase timings** — reasoning is collapsed into a live
+  `thinking… N tok · Ns · X tok/s` meter (set `OPENHARN_SHOW_THINKING=1` to see the raw
+  chain-of-thought); each turn then prints separate `think` / `reply` / `total` lines.
 - **Context management** — tool results are capped and the conversation is trimmed to
   fit the model's window (with a retry on overflow).
 - **Circuit breaker** — hard-stops a model that gets stuck repeating the same call.

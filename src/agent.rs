@@ -177,10 +177,23 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
     let mut content = String::new();
     let mut tool_calls: Vec<Value> = vec![];
     let mut printed = false;
-    let mut thinking = false; // currently inside dim reasoning output
+    let mut thinking = false; // currently inside dim reasoning output (show-thinking mode)
+    // By default we DON'T dump the model's raw chain-of-thought — for a small model it's a
+    // verbose wall of text. Instead we collapse it into a single live in-place meter and
+    // show only the answer. Set OPENHARN_SHOW_THINKING=1 to see the raw reasoning.
+    let show_thinking = std::env::var_os("OPENHARN_SHOW_THINKING").is_some();
+    let mut live = false; // a live one-line thinking meter is currently on screen
     let started = std::time::Instant::now();
     let mut completion_tokens: Option<u64> = None;
     let mut server_tps: Option<f64> = None;
+    // Per-phase accounting: thinking (reasoning_content) vs reply (content). We count
+    // one token per non-empty stream chunk (llama-server emits a chunk per token) and
+    // stamp when each phase starts, so we can report separate tok/s + seconds for each.
+    let mut think_tokens = 0usize;
+    let mut reply_tokens = 0usize;
+    let mut think_start: Option<std::time::Instant> = None;
+    let mut reply_start: Option<std::time::Instant> = None;
+    let mut last_meter = started;
     let reader = BufReader::new(resp);
     for line in reader.lines().map_while(Result::ok) {
         let Some(data) = line.strip_prefix("data:") else {
@@ -201,24 +214,44 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
             server_tps = Some(t);
         }
         let delta = &chunk["choices"][0]["delta"];
-        // hybrid-thinking models stream reasoning separately — show it dim
+        // hybrid-thinking models stream reasoning separately
         if let Some(r) = delta["reasoning_content"].as_str() {
             if !r.is_empty() {
-                if !thinking {
-                    print!("\x1b[2m");
-                    thinking = true;
+                think_start.get_or_insert_with(std::time::Instant::now);
+                think_tokens += 1;
+                if show_thinking {
+                    if !thinking {
+                        print!("\x1b[2m");
+                        thinking = true;
+                    }
+                    print!("{r}");
+                    io::stdout().flush().ok();
+                    printed = true;
+                } else if last_meter.elapsed().as_millis() >= 120 {
+                    // collapse the chain-of-thought into ONE live, in-place line
+                    let secs = think_start.unwrap().elapsed().as_secs_f64().max(0.001);
+                    print!(
+                        "\r\x1b[2m  thinking… {think_tokens} tok · {secs:.1}s · {:.0} tok/s\x1b[0m\x1b[K",
+                        think_tokens as f64 / secs
+                    );
+                    io::stdout().flush().ok();
+                    live = true;
+                    last_meter = std::time::Instant::now();
                 }
-                print!("{r}");
-                io::stdout().flush().ok();
-                printed = true;
             }
         }
         if let Some(t) = delta["content"].as_str() {
             if !t.is_empty() {
+                if live {
+                    print!("\r\x1b[K"); // erase the live thinking line before the answer
+                    live = false;
+                }
                 if thinking {
                     print!("\x1b[0m\n\n"); // close dim thinking before the answer
                     thinking = false;
                 }
+                reply_start.get_or_insert_with(std::time::Instant::now);
+                reply_tokens += 1;
                 print!("{t}");
                 io::stdout().flush().ok();
                 content.push_str(t);
@@ -251,18 +284,51 @@ fn stream_response(resp: reqwest::blocking::Response) -> (String, Vec<Value>) {
     }
     // drop empty accumulator slots the model never filled
     tool_calls.retain(|t| !t["function"]["name"].as_str().unwrap_or("").is_empty());
+    if live {
+        print!("\r\x1b[K"); // erase the live thinking line (e.g. a tool-only turn)
+    }
     if thinking {
         print!("\x1b[0m"); // never leave the terminal dimmed
     }
     if printed {
         println!();
     }
-    // tok/s: prefer llama-server's own measurement, else usage ÷ wall time
-    let tps = server_tps.or_else(|| {
-        completion_tokens.map(|n| n as f64 / started.elapsed().as_secs_f64().max(0.001))
-    });
-    if let (Some(n), Some(tps)) = (completion_tokens, tps) {
-        println!("\x1b[2m  ⏱ {n} tok · {tps:.1} tok/s\x1b[0m");
+    let end = std::time::Instant::now();
+
+    // Per-phase readout: thinking and reply each get their own token count, seconds,
+    // and tok/s. Thinking spans first→last reasoning token (i.e. until the reply
+    // starts, or the turn ends for a tool-only turn); reply spans first content
+    // token→end.
+    let mut parts: Vec<String> = Vec::new();
+    if think_tokens > 0 {
+        let ts = think_start.unwrap_or(started);
+        let think_end = reply_start.unwrap_or(end);
+        let secs = (think_end - ts).as_secs_f64().max(0.001);
+        parts.push(format!(
+            "think {think_tokens} tok · {secs:.1}s · {:.0} tok/s",
+            think_tokens as f64 / secs
+        ));
+    }
+    if reply_tokens > 0 {
+        let rs = reply_start.unwrap_or(started);
+        let secs = (end - rs).as_secs_f64().max(0.001);
+        parts.push(format!(
+            "reply {reply_tokens} tok · {secs:.1}s · {:.0} tok/s",
+            reply_tokens as f64 / secs
+        ));
+    }
+    // Tool-only turn (no streamed text): fall back to server usage/timings.
+    if parts.is_empty() {
+        if let Some(n) = completion_tokens {
+            let tps = server_tps.unwrap_or(n as f64 / started.elapsed().as_secs_f64().max(0.001));
+            parts.push(format!("{n} tok · {tps:.1} tok/s"));
+        }
+    }
+    if !parts.is_empty() {
+        for p in &parts {
+            println!("\x1b[2m  {p}\x1b[0m");
+        }
+        println!("\x1b[2m  total {:.1}s\x1b[0m", (end - started).as_secs_f64());
     }
     (content, tool_calls)
 }
