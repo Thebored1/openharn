@@ -1,176 +1,47 @@
-# Why a small model can't call your tools: a harness-level study of LFM2, LFM2.5, and Gemma-E2B under openharn
+# Notes: which small models can call tools on CPU
 
-*A reproducible investigation into structured tool-calling failures in aggressively
-quantized local models, and a same-prompt benchmark of eleven GGUF builds driven
-through the [openharn](../README.md) agent loop on commodity hardware.*
+For a small local coding agent, the gating capability is emitting a **dispatchable tool
+call**. These are notes from driving a dozen small models through openharn on CPU: a
+detailed look at one model that can't, and a same-prompt benchmark of the rest. Main
+finding: tool-calling tracks the model *family and post-training*, not the quantization
+tier.
 
----
+## Setup
 
-## Abstract
-
-Local, small-language-model coding agents live or die by one narrow capability:
-the model's ability to emit a **structured tool call** that the harness can parse
-and execute. When we pointed openharn — a ~1,500-line Rust agent loop over any
-OpenAI-compatible endpoint — at `LFM2-8B-A1B-UD-Q3_K_XL`, the agent stalled on
-every request. This report documents the full root-cause investigation and a
-subsequent controlled benchmark.
-
-We show, with token-level evidence, that the failure is **not** a parser/format
-mismatch in the harness and **not** a prompt-construction error, but the model's
-refusal to *emit* its own native tool-call delimiters: given a byte-perfect prompt
-in which the tool-call tokens are registered as single special-token IDs, the model
-still generates a Markdown ```` ```bash ```` fence instead of
-`<|tool_call_start|>[...]<|tool_call_end|>`. We then benchmark eleven models (seven
-LFM variants, three Gemma-E2B variants, one tool-tuned 1.2B) against an identical
-conversation-plus-tool-use scenario, logging wall time, failed requests,
-tokens/second, and thinking-token volume. The headline result: **tool-calling
-competence tracks the model family and post-training, not the quantization level.**
-All three `LFM2-v2-8B-A1B` builds — including the higher-fidelity Q4_K_XL — fail
-identically (0/4 tool steps), while every `LFM2.5` build and the tool-tuned
-`LFM2-1.2B-Tool` succeed. We also isolate a practical control knob for LFM2.5's
-otherwise-unstoppable reasoning: an assistant-turn prefill of a closed
-`<think></think>` block drives thinking-token output to zero while preserving tool
-calls.
-
----
-
-## 1. Introduction
-
-openharn's design thesis is that **the harness matters more than the model**: a
-capable model in a sloppy harness looks broken, and a small model in a good harness
-punches above its weight. The harness grounds the model (failed reads enumerate what
-actually exists), anchors edits (the model changes a span, never reprints a file),
-states the true scope of searches, and trims context to fit the window.
-
-That thesis has an implicit precondition: the model must produce tool calls the
-harness can dispatch. openharn consumes the OpenAI `tool_calls` array that
-`llama-server` returns; it does not attempt to scrape free-text. So the question
-this report answers is narrow and load-bearing: **given a correct harness, which
-small models actually emit dispatchable tool calls, and why do some fail?**
-
-We investigate a concrete failure, establish its cause at the token level, and then
-generalize with a controlled benchmark across a model zoo already present on the
-test machine.
-
----
-
-## 2. System under test
-
-### 2.1 openharn
-
-openharn is four Rust files: a REPL (`src/main.rs`), the agent loop and
-context-fitting (`src/agent.rs`), ten tools with per-session read/todo state
-(`src/tools.rs`), and an anchored edit-replacer cascade (`src/edit.rs`). It exposes
-ten tools — `read`, `write`, `edit`, `multiedit`, `glob`, `grep`, `bash`,
-`webfetch`, `todowrite`, `todoread` — via OpenAI function-calling schemas, sends the
-full conversation on every turn, streams the reply, dispatches any tool calls, and
-loops until the model returns text with no tool call.
-
-### 2.2 Runtime
-
-| Component | Value |
+| | |
 |---|---|
-| Agent | openharn 0.1.0 (Rust, edition 2024) |
-| Inference server | `llama.cpp` / `llama-server` build **9608 (70b54e140)** |
-| Server flags | `--jinja --ctx-size 8192 -ngl 0 --no-warmup` (CPU-only) |
-| OS | Windows 11 Home 26200 |
-| GPU | NVIDIA RTX 2050 (4 GB) + Intel UHD (2 GB) |
-| Offload | none (see §2.3) |
+| Agent | openharn (Rust) |
+| Server | `llama.cpp` / `llama-server` build 9608 |
+| Flags | `--jinja --ctx-size 8192 -ngl 0 --no-warmup` (CPU-only) |
+| Hardware | Intel AVX2 laptop, Windows 11; also a Ryzen box |
 
-### 2.3 Why CPU-only
+CPU-only throughout: full GPU offload (`-ngl 99`) with a 16k KV cache OOM-crashed the
+4 GB laptop GPU immediately, and these are A1B MoE models (~1B active params), so CPU is
+usable (~20–35 tok/s).
 
-The first launch used `-ngl 99` (offload all layers) with a 16k KV cache. On the
-4 GB RTX 2050 this crashed the Vulkan backend mid-request:
+## Case: LFM2-8B-A1B-Q3_K_XL never calls a tool
 
-```
-ggml_vulkan: Device memory allocation of size 268435456 failed.
-ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
-```
-
-A 3–5 GB model plus KV cache plus compute buffers does not fit in 4 GB. Because
-these are **A1B mixture-of-experts** models (~1 B *active* parameters per token),
-CPU inference remains usable (20–35 tok/s for the LFM models), so all measurements
-below use `-ngl 0` for stability and comparability.
-
----
-
-## 3. The tool-call format under investigation
-
-LFM2 / LFM2.5 do **not** emit OpenAI-style `{"name": ..., "arguments": {...}}` JSON.
-They emit a **Pythonic call list** bracketed by special tokens:
-
-```
-<|tool_call_start|>[glob(pattern="src/*.rs")]<|tool_call_end|>
-```
-
-`llama.cpp` (with `--jinja`) ships a parser for this format. It is **lazy /
-trigger-based**: the tool-call grammar activates only *after* the model emits the
-`<|tool_call_start|>` trigger. If that trigger never appears, the output is treated
-as ordinary assistant text and `tool_calls` comes back `null`.
-
-This is the crux of everything that follows. The harness is correct; the parser
-exists; the entire question reduces to **whether the model samples the trigger
-token.**
-
----
-
-## 4. Case study: LFM2-8B-A1B-Q3_K_XL never calls a tool
-
-### 4.1 Symptom
-
-Driven through openharn, the model answers in prose and never dispatches a tool.
-Hitting the raw endpoint (`tool_choice: "auto"`) reproduces it:
+Driven through openharn it answers in prose and never dispatches. Hitting the raw endpoint
+reproduces it:
 
 ```
 CONTENT:    "```bash\nglob src/*.rs\n```"
 TOOL_CALLS: null
 ```
 
-The model clearly *intends* to search — it just renders the intent as a Markdown
-shell fence rather than the native call.
-
-### 4.2 Ruling out the harness and the runtime
-
-A natural first hypothesis (and a common, correct critique of naive harnesses) is a
-**shape mismatch**: the model emits the Pythonic call between the delimiters, and a
-JSON-only parser fails to recognize it. We tested this directly by inspecting the
-raw `content` stream — not the parsed field — across three presentations:
+The model wants to search — it just writes a Markdown shell fence instead of a call. Ruling
+out the obvious causes:
 
 | Attempt | `<\|tool_call_start\|>` in content? | `tool_calls` | Output |
 |---|---|---|---|
-| `tool_choice: auto` | **no** | null | ```` ```bash\nglob 'src/*.rs'``` ```` |
-| system prompt cueing tool use | **no** | null | Markdown fence |
-| `tool_choice: "required"` | **no** | null | Markdown fence (returned in ~5 s — no grammar was enforced) |
+| `tool_choice: auto` | no | null | ```` ```bash\nglob 'src/*.rs'``` ```` |
+| system prompt cueing tools | no | null | Markdown fence |
+| `tool_choice: "required"` | no | null | Markdown fence (5 s — no grammar built) |
 
-The delimiters are **absent from the output entirely**. This falsifies the
-shape-mismatch hypothesis for this model: there is nothing between delimiters to
-extract because there are no delimiters. A regex-and-`literal_eval` fallback — the
-correct fix when a model emits the tokens as text — would have nothing to match.
-
-### 4.3 Ruling out prompt construction
-
-We dumped the exact rendered prompt (`/apply-template`) that `llama-server` builds
-from the tools array:
-
-```
-<|im_start|>system
-List of tools: <|tool_list_start|>[{"type": "function", "function": {"name": "glob",
-"description": "Find files by glob pattern.", "parameters": {"type": "object",
-"properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}}]<|tool_list_end|><|im_end|>
-<|im_start|>user
-List the .rs files under src using the glob tool.<|im_end|>
-<|im_start|>assistant
-```
-
-This is the canonical LFM2 tool block — identical to what
-`tokenizer.apply_chat_template(messages, tools=[...])` produces. Special-token
-census is balanced (`<|im_start|>`×3, `<|im_end|>`×2, `<|tool_list_start|>`×1,
-`<|tool_list_end|>`×1). Presentation is not the problem.
-
-### 4.4 Ruling out tokenizer / special-token registration
-
-We tokenized the delimiters (`/tokenize` with `with_pieces`) to check they are real
-special tokens and not split into characters:
+The delimiters are absent entirely, so this isn't a parser shape-mismatch (there's nothing
+to recover). The rendered prompt is the canonical LFM2 tool block — same as
+`apply_chat_template(tools=...)` — so it isn't a presentation bug. And the delimiters are
+real single tokens, not split into text:
 
 | String | Tokens | ID |
 |---|---|---|
@@ -179,300 +50,88 @@ special tokens and not split into characters:
 | `<\|tool_call_end\|>` | 1 | 11 |
 | `<\|im_start\|>` | 1 | 6 |
 
-Embedded in text, the string still resolves to the single special token:
-`x<|tool_call_start|>[glob(pattern="src")]<|tool_call_end|>` →
-`x` / **10** / `[` / `glob` / `(` / `pattern` / `="` / `src` / `")` / `]` / **11**.
+The model *can* produce the format — forcing generation with a GBNF grammar yields the
+exact native call — it just won't sample token 10 under normal decoding. So it's a
+decoding-behavior deficit at this quantization: it defaults to a Markdown fence instead of
+its own protocol. Not a parser bug, not a prompt bug. The benchmark below shows this is a
+property of the `LFM2-v2 8B-A1B` family, at Q3 *and* Q4.
 
-The trigger is a registered special token in the low reserved-ID range. The model is
-not seeing it as plain characters.
+## Benchmark
 
-### 4.5 Proving the capability exists in the weights
+Identical scenario for every model — a chat turn plus search / create / find / edit tool
+calls — driven through openharn's loop on CPU. Zero transport-level failed requests; every
+"fail" is a task/tool miss, not a crash.
 
-Constraining generation with an explicit GBNF grammar (no `tools` field) forced the
-exact native call:
+| Model | Quant | Time s | Tok/s | Think tok | Tool hits | Task |
+|---|---|---:|---:|---:|:---:|:---:|
+| LFM2-1.2B-Tool | Q4_K_M | 18.5 | 33.5 | 0 | 3/4 | PASS |
+| LFM2-8B-A1B | Q3_K_S | 17.4 | 26.2 | 0 | 0/4 | fail |
+| LFM2-8B-A1B | Q3_K_XL | 17.6 | 24.4 | 0 | 0/4 | fail |
+| LFM2-8B-A1B | Q4_K_XL | 15.0 | 27.6 | 0 | 0/4 | fail |
+| LFM2.5-1.2B-Instruct | Q4_K_M | 16.2 | 33.5 | 0 | 3/4 | PASS |
+| LFM2.5-8B-APEX-Compact | — | 77.3 | 22.8 | 1089 | 4/4 | PASS |
+| LFM2.5-8B-APEX-Mini | — | 176.0 | 21.6 | 3084 | 3/4 | PASS |
+| LFM2.5-8B-A1B | Q4_K_M | 89.4 | 23.1 | 1302 | 4/4 | PASS |
+| gemma-3n-E2B-it | IQ3_XXS | 20.3 | 8.3 | 0 | 0/4 | fail |
+| gemma-4-E2B-it | IQ4_XS | 69.4 | 9.5 | 389 | 3/4 | PASS |
+| gemma-4-E2B-it-qat | Q4_K_XL | 91.0 | 9.2 | 624 | 0/4 | fail |
 
-```
-<|tool_call_start|>[glob(pattern="src/*.rs")]<|tool_call_end|>
-```
+## What it shows
 
-So the model **can** produce token 10 — the weights support it — but will not sample
-it spontaneously under normal decoding. (Note: `llama.cpp` refuses a custom grammar
-combined with the `tools` field — *"Cannot use custom grammar constraints with
-tools"* — so grammar-forcing is not a usable path for real agent operation.)
+- **Family/post-training, not quant.** All three `LFM2-v2 8B-A1B` builds fail identically
+  (Q3_K_S, Q3_K_XL, *and* Q4_K_XL). Raising the quant a full tier changed nothing. Meanwhile
+  the tool-tuned `LFM2-1.2B-Tool` (5× smaller) passes, and every `LFM2.5` build passes. The
+  discriminator is tool-training, not bit-width.
+- **Reasoning is the wall-clock.** The passing 8B LFM2.5 models spend 1089–3084 thinking
+  tokens, pushing turns to 77–176 s on CPU vs ~16–18 s for the non-reasoning small models.
+  (More: [`reasoning-tax.md`](reasoning-tax.md).)
+- **Gemma-E2B** runs slow on CPU (~8–9 tok/s); only gemma-4-E2B-IQ4_XS completed the task.
 
-### 4.6 Verdict
+Best CPU picks from this set: LFM2.5-1.2B-Instruct (fast, passes) and LFM2.5-8B-A1B-Q4_K_M
+(4/4, slower). Full data in [`tests/bench_logs/`](../tests/bench_logs/); harness:
+[`tests/benchmark.py`](../tests/benchmark.py).
 
-Every alternative explanation is eliminated:
+## Follow-up: Granite, and a corrected verdict
 
-1. **Prompt** — canonical, verified byte-for-byte. ✓ correct
-2. **Special tokens** — single registered IDs, not split. ✓ correct
-3. **Capability** — grammar-forcing yields the exact call. ✓ present in weights
-4. **Generation** — under normal decoding the model never samples token 10. ✗
+Adding two Granite models later:
 
-The failure is a **decoding-behavior deficit**: at this quantization the model
-defaults to a Markdown code fence instead of its own tool-call protocol. It is not a
-parser-shape bug and not a presentation bug. §7 shows this deficit is a property of
-the `LFM2-v2-8B-A1B` family, reproduced at Q3 *and* Q4.
+| Model | Time s | Tok/s | Tool hits | Task |
+|---|---:|---:|:--:|:--:|
+| granite-4.0-h-tiny (Q4_K_XL) | 28.8 | 17.9 | 3/4 | PASS |
+| granite-3.1-1b-a400m (Q8_0) | 18.1 | 36.5 | 0/4 | fail |
 
----
-
-## 5. Controlling reasoning in LFM2.5
-
-LFM2.5 models reason by default, and the flag intended to disable it
-(`--reasoning off`, which sets `enable_thinking = 0`) is a **no-op** for the LFM2.5
-chat template: the template references `preserve_thinking` / `message.thinking` only
-to *replay past* assistant thoughts and contains no gate for the current turn. The
-model therefore emits `<think>…</think>` regardless, and `llama.cpp` extracts it into
-`reasoning_content`.
-
-We measured four suppression strategies (LFM2.5-8B-A1B-Q4_K_M, `max_tokens=256`):
-
-| Method | Thinking chars | Tool call? |
-|---|---|---|
-| baseline | 1093 | ✗ (ran out mid-think) |
-| system "do not think" | 454 | ✓ |
-| user `/no_think` | 1136 | ✗ (ignored) |
-| **assistant prefill `<think></think>`** | **0** | **✓** |
-
-**Finding:** priming the assistant turn with a closed `<think></think>` block makes
-`llama.cpp` continue from an already-closed think state, driving reasoning output to
-zero while preserving a clean native tool call. This is the reliable request-level
-lever when the template exposes no thinking switch. (openharn does not currently
-inject this prefill; wiring it in behind an opt-in flag would make LFM2.5 usable in
-a reasoning-off, low-latency mode.)
-
----
-
-## 6. Benchmark methodology
-
-### 6.1 Scenario (identical for every model)
-
-The harness (`tests/benchmark.py`) drives an openharn-equivalent agent loop with
-openharn's ten tool schemas, over a fresh seeded scratch project (a `src/app.py`
-defining `class Config`, a `README.md`, and a `settings.toml`). The same system
-prompt (`src/prompt.txt`) and the same five user turns are used for all models:
-
-1. **Conversation** — "In one sentence, what kinds of coding tasks can you help
-   with?" (no tool expected)
-2. **Search** — grep the project for `Config` → expects `grep`
-3. **Create** — write `notes.txt` containing `benchmark run` → expects `write`
-4. **Find** — locate any `*.toml` file → expects `glob`
-5. **Edit** — change `benchmark run` → `benchmark complete` in `notes.txt` (requires
-   openharn's read-before-edit grounding) → expects `edit`
-
-Each user turn runs a bounded tool loop (≤4 iterations); tools execute with
-openharn's semantics (project-scoped `glob`/`grep`, read-before-edit guard,
-anchored-ish replace).
-
-### 6.2 Metrics
-
-- **Time (s)** — wall time for the scenario, excluding model load.
-- **Failed requests** — HTTP non-200, timeout, or transport exception. *(Distinct
-  from a tool/task miss, which is a well-formed response that simply didn't call the
-  right tool.)*
-- **Tok/s** — honest aggregate `1000 · Σ predicted_n / Σ predicted_ms` from
-  `llama-server` timings. (An earlier per-request `predicted_per_second` mean was
-  discarded after it produced >4000 tok/s artifacts on cached/short generations.)
-- **Thinking tokens** — `reasoning_content` plus any inline `<think>…</think>`,
-  re-tokenized via `/tokenize`.
-- **Tool hits** — of the 4 tool-requiring turns, how many produced the expected
-  structured call.
-- **Task** — PASS iff `notes.txt` ends the run containing `benchmark complete`.
-
-### 6.3 Controls
-
-Same prompt, same scenario, same seeded project, same server flags, same CPU-only
-configuration, one model loaded at a time (server killed and relaunched per model),
-temperature 0.2, `max_tokens=1024`.
-
----
-
-## 7. Results
-
-Eleven models, single clean run, CPU-only. **Zero transport-level failed requests
-across all models** — every "fail" below is a task/tool-format miss, not a crash.
-
-| Model | Quant | Size | Load s | Time s | Tok/s | Compl.tok | Think tok | Tool hits | Task |
-|---|---|---:|---:|---:|---:|---:|---:|:---:|:---:|
-| LFM2-1.2B-Tool | Q4_K_M | 697 MB | 3.0 | 18.5 | 33.5 | 310 | 0 | 3/4 | **PASS** |
-| LFM2-8B-A1B | Q3_K_S | 3475 MB | 4.1 | 17.4 | 26.2 | 151 | 0 | 0/4 | fail |
-| LFM2-8B-A1B | Q3_K_XL | 3506 MB | 4.1 | 17.6 | 24.4 | 151 | 0 | 0/4 | fail |
-| LFM2-8B-A1B | Q4_K_XL | 4524 MB | 5.1 | 15.0 | 27.6 | 95 | 0 | 0/4 | fail |
-| LFM2.5-1.2B-Instruct | Q4_K_M | 697 MB | 3.0 | 16.2 | 33.5 | 226 | 0 | 3/4 | **PASS** |
-| LFM2.5-8B-APEX-Compact | — | 4017 MB | 5.1 | 77.3 | 22.8 | 1280 | 1089 | 4/4 | **PASS** |
-| LFM2.5-8B-APEX-Mini | — | 3467 MB | 5.1 | 176.0 | 21.6 | 3308 | 3084 | 3/4 | **PASS** |
-| LFM2.5-8B-A1B | Q4_K_M | 4917 MB | 6.1 | 89.4 | 23.1 | 1518 | 1302 | 4/4 | **PASS** |
-| gemma-3n-E2B-it | IQ3_XXS | 2216 MB | 5.1 | 20.3 | 8.3 | 80 | 0 | 0/4 | fail |
-| gemma-4-E2B-it | IQ4_XS | 2846 MB | 7.1 | 69.4 | 9.5 | 517 | 389 | 3/4 | **PASS** |
-| gemma-4-E2B-it-qat | Q4_K_XL | 2499 MB | 6.1 | 91.0 | 9.2 | 725 | 624 | 0/4 | fail |
-
----
-
-## 8. Discussion
-
-### 8.1 Tool-calling tracks family and post-training, not quantization
-
-The most important result overturns the intuitive "it's just the aggressive quant"
-explanation. The `LFM2-v2-8B-A1B` base fails **identically at Q3_K_S, Q3_K_XL, and
-Q4_K_XL** (0/4 in every case). Raising the quantization by a full tier changed
-nothing. Meanwhile:
-
-- `LFM2-1.2B-Tool` — a **tool-tuned** v2 model 5× smaller — passes.
-- Every `LFM2.5` build passes.
-
-The discriminator is therefore **post-training for tool use** (and the LFM2.5
-generation), not bit-width. The 8B-A1B v2 base simply was not disposed to emit its
-tool-call protocol under normal decoding, and no quant recovers a behavior the
-checkpoint doesn't foreground.
-
-### 8.2 The reasoning tax
-
-Every passing 8B LFM2.5 model reasons heavily: 1,089–3,084 thinking tokens per
-scenario, which on CPU inflates wall time to 77–176 s versus ~16–18 s for the
-non-reasoning small models. Thinking materially improves tool reliability (the 8B
-reasoners reach 4/4) but at a latency cost that is punishing without a GPU. The
-`<think></think>` prefill from §5 is the mitigation: it recovers small-model latency
-while keeping the native tool calls, at some accuracy risk.
-
-### 8.3 Best picks on 4 GB-class hardware
-
-- **Fastest competent:** `LFM2.5-1.2B-Instruct` — passes, ~33 tok/s, zero thinking
-  overhead, ~16 s end-to-end.
-- **Most reliable:** `LFM2.5-8B-A1B-Q4_K_M` — 4/4 and correct, but slow due to
-  reasoning.
-- **Purpose-built and tiny:** `LFM2-1.2B-Tool` — passes, fast, non-reasoning.
-
-### 8.4 Gemma-E2B
-
-Gemma-E2B runs but is CPU-slow (~8–9 tok/s). Only `gemma-4-E2B-it-IQ4_XS` completed
-the task; `gemma-3n-E2B` (0/4) and the QAT build (0/4) did not reliably tool-call in
-this setup. As with LFM, competence did not correlate with the nominal quant tier.
-
----
-
-## 9. Threats to validity
-
-- **Sampling variance.** Temperature 0.2 is not greedy; borderline models (notably
-  `LFM2-1.2B-Tool`, which scored 4/4 in a warm-up and 3/4 in the recorded run) will
-  jitter ±1 tool hit run-to-run. Trends across families are robust; a single
-  model's exact tool-hit count is not.
-- **Token budget.** `max_tokens=1024` can truncate a heavy reasoner mid-thought,
-  scoring it as a miss. This penalizes high-latency reasoning models and is a
-  deliberate, disclosed bound rather than a neutral choice.
-- **Harness fidelity.** The Python benchmark re-implements openharn's tool semantics
-  rather than driving the Rust binary directly; its edit matcher is simpler than
-  `src/edit.rs`'s six-rung anchored cascade. Tool-*dispatch* behavior is faithful;
-  edit-*forgiveness* is not identical.
-- **CPU-only.** Tokens/second and wall-time absolutes are specific to this machine
-  and would change substantially with GPU offload. Relative ordering should hold.
-- **Single run.** Each model was measured once in the reported run. Numbers are
-  indicative, not distributions.
-
----
-
-## 10. Reproducibility
-
-```sh
-# 1. Serve a model (CPU-only; drop -ngl 0 / raise it if you have VRAM headroom)
-llama-server -m ~/Downloads/LFM2.5-8B-A1B-Q4_K_M.gguf \
-  --jinja --ctx-size 8192 -ngl 0 --host 127.0.0.1 --port 8080 --no-warmup
-
-# 2a. Interactive: drive it through the real openharn REPL
-OPENHARN_BASE_URL=http://127.0.0.1:8080/v1 OPENHARN_MODEL=local \
-  cargo run -- .
-
-# 2b. Benchmark all models (spawns/kills llama-server per model itself)
-python tests/benchmark.py            # writes tests/bench_logs/results.{md,json}
-python tests/benchmark.py --only LFM2.5   # filter to a subset; merges into the report
-```
-
-Diagnostic probes used in §4–§5 (raw content vs. `tool_calls`, `/apply-template`,
-`/tokenize` with `with_pieces`, GBNF grammar forcing, `<think></think>` prefill) are
-plain `curl`/`urllib` calls against the OpenAI-compatible endpoint and are described
-inline above so they can be re-run against any GGUF.
-
-The machine-readable results (`results.json`, `results.md`) and the console
-transcript (`run.out`) live under `tests/bench_logs/`; per-model `llama-server`
-logs are written there too but are git-ignored (`*.log`).
-
----
-
-## 11. Conclusion
-
-For small local coding agents, **structured tool-calling is the gating capability,
-and it is a property of the checkpoint's post-training, not of the harness or the
-quantization tier.** A correct harness (canonical tool block, registered special
-tokens, a working lazy parser) is necessary but not sufficient: if the model does
-not sample its own trigger token under normal decoding, no parser can rescue it, and
-raising the quant does not help. The practical guidance is to select a model that is
-demonstrably disposed to emit tool calls — a tool-tuned build (`LFM2-1.2B-Tool`) or
-the tool-competent generation (`LFM2.5`) — and, where reasoning latency is
-unacceptable, to suppress thinking at the request level via an assistant `<think></think>`
-prefill rather than fighting a template flag that does nothing.
-
----
-
-## Addendum — text-emitted tool calls, and an a400m correction
-
-A later probe of `granite-3.1-1b-a400m` (Q8_0) — the fastest model tested (~38 tok/s) —
-overturned an earlier hasty conclusion and produced a harness improvement.
-
-**Symptom.** In the benchmark it scored 0/4, and it was first written off as "400M
-active params is too thin to call tools." Wrong. Direct probes showed it *does* emit a
-valid structured call — the server just doesn't parse it:
+The a400m — fastest model tested — first got written off as "too small to call tools."
+Wrong. Direct probes showed it emits a valid structured call the server just doesn't parse:
 
 ```
-content:  <tool_call>[{"arguments": {"pattern": "src/**/*.rs"}, "name": "glob"}]
+content:    <tool_call>[{"arguments": {"pattern": "src/**/*.rs"}, "name": "glob"}]
 tool_calls: null
 ```
 
-**Cause.** The Granite-3.1 template instructs the model to trigger with the special
-token `<|tool_call|>`, but the model emits plain `<tool_call>`. llama.cpp's `peg-native`
-parser is looking for the former, so it drops a perfectly valid call to plain text —
-the same *class* of failure as LFM2, but here the payload is a real structured call one
-regex away from working. (Granite-4.0 h-tiny uses a shape llama.cpp *does* parse, which
-is why it scored 3/4.)
+Granite-3.1's template triggers with `<\|tool_call\|>`, but the model emits plain
+`<tool_call>`, so llama.cpp drops it to text. That's a harness parse gap, not model
+incapacity — so openharn now recovers text-emitted calls (see
+[`adaptive-tool-calling.md`](adaptive-tool-calling.md)). But with the fallback recovering
+its calls, a400m *still* scores 0/4: it's inconsistent about shape and often fills
+arguments with the tool's schema instead of real values. So the 0/4 stood, for the correct
+reason — unreliable at *which* tool and *what* args, not "too small to attempt." granite-4.0
+(h-tiny) uses a shape llama.cpp parses natively; it's a viable non-LFM option but doesn't
+beat APEX-Compact.
 
-**Fix.** openharn now has a **tool-call recovery** fallback (`parse_text_tool_calls` in
-`src/agent.rs`, mirrored in the benchmark): when the native parse yields nothing, it
-extracts a `<tool_call>`/`<|tool_call|>` marker + JSON (list *or* object, tolerating a
-`{function:{…}}` wrapper and `arguments`-vs-`parameters`) and dispatches it. It fires
-only on an otherwise-empty parse, so a normal answer is never misread.
+Takeaway: a 0/4 can be harness *or* model — check which before concluding. The
+"active-param floor" framing was too crude; format/selection reliability is a separate axis
+from raw capability.
 
-**Corrected verdict.** With the fallback recovering its calls, a400m *dispatches* —
-but still scores 0/4. It's inconsistent about its output shape and frequently fills
-arguments with the tool's *schema* instead of real values, or picks the wrong tool. So
-the original outcome (unusable for agentic work) held, but the reason was wrong: **not
-"too small to attempt tools" — too unreliable at *which* tool and *what* arguments.**
-The harness was masking a genuine model weakness *and* had a real gap of its own; both
-are now understood, and the gap is closed.
+## Model list
 
-**Takeaways.** (1) A 0/4 can be harness *or* model — verify which before concluding.
-(2) The "active-param floor for tool use" framing was too crude; format/selection
-reliability is a separate axis from raw capability. (3) Recovering text-emitted
-structured calls is cheap and family-agnostic; recovering an unstructured Markdown
-fence (LFM2-v2) is not, and remains unsolved.
-
-### Appendix A — model manifest
-
-| File | Params (active) | Quant | Size | Family |
-|---|---|---|---:|---|
-| `LFM2-1.2B-Tool-Q4_K_M.gguf` | 1.2 B | Q4_K_M | 697 MB | LFM2 v2, tool-tuned |
-| `LFM2-8B-A1B-Q3_K_S.gguf` | 8 B (≈1 B) | Q3_K_S | 3475 MB | LFM2 v2 MoE |
-| `LFM2-8B-A1B-UD-Q3_K_XL.gguf` | 8 B (≈1 B) | Q3_K_XL | 3506 MB | LFM2 v2 MoE |
-| `LFM2-8B-A1B-UD-Q4_K_XL.gguf` | 8 B (≈1 B) | Q4_K_XL | 4524 MB | LFM2 v2 MoE |
-| `LFM2.5-1.2B-Instruct-Q4_K_M.gguf` | 1.2 B | Q4_K_M | 697 MB | LFM2.5 |
-| `LFM2.5-8B-A1B-APEX-I-Compact.gguf` | 8 B (≈1 B) | — | 4017 MB | LFM2.5 MoE (APEX) |
-| `LFM2.5-8B-A1B-APEX-I-Mini.gguf` | 8 B (≈1 B) | — | 3467 MB | LFM2.5 MoE (APEX) |
-| `LFM2.5-8B-A1B-Q4_K_M.gguf` | 8 B (≈1 B) | Q4_K_M | 4917 MB | LFM2.5 MoE |
-| `gemma-3n-E2B-it-UD-IQ3_XXS.gguf` | E2B | IQ3_XXS | 2216 MB | Gemma 3n |
-| `gemma-4-E2B-it-IQ4_XS.gguf` | E2B | IQ4_XS | 2846 MB | Gemma 4 |
-| `gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf` | E2B | Q4_K_XL (QAT) | 2499 MB | Gemma 4 |
-
-### Appendix B — the LFM2.5 tool-block divergence
-
-LFM2 (v2) renders tools inside `<|tool_list_start|>[…]<|tool_list_end|>`. LFM2.5
-drops those delimiters and renders a plain `List of tools: [ … ]` line in the system
-turn — yet still emits `<|tool_call_start|>[…]<|tool_call_end|>` for calls, and
-`llama.cpp` still parses them. The tool-*list* framing and the tool-*call* framing
-are independent; only the latter gates dispatch.
+| File | Params (active) | Quant | Family |
+|---|---|---|---|
+| `LFM2-1.2B-Tool-Q4_K_M` | 1.2 B | Q4_K_M | LFM2 v2, tool-tuned |
+| `LFM2-8B-A1B-Q3_K_S / UD-Q3_K_XL / UD-Q4_K_XL` | 8 B (≈1 B) | Q3–Q4 | LFM2 v2 MoE |
+| `LFM2.5-1.2B-Instruct-Q4_K_M` | 1.2 B | Q4_K_M | LFM2.5 |
+| `LFM2.5-8B-A1B-APEX-I-Compact / -Mini` | 8 B (≈1 B) | — | LFM2.5 MoE (APEX) |
+| `LFM2.5-8B-A1B-Q4_K_M` | 8 B (≈1 B) | Q4_K_M | LFM2.5 MoE |
+| `gemma-3n-E2B-it-UD-IQ3_XXS` | E2B | IQ3_XXS | Gemma 3n |
+| `gemma-4-E2B-it-IQ4_XS / -qat-UD-Q4_K_XL` | E2B | IQ4_XS / Q4 QAT | Gemma 4 |
+| `granite-4.0-h-tiny-UD-Q4_K_XL` | 7 B (≈1 B) | Q4_K_XL | Granite 4.0 hybrid MoE |
+| `granite-3.1-1b-a400m-instruct-Q8_0` | 1 B (400 M) | Q8_0 | Granite 3.1 MoE |

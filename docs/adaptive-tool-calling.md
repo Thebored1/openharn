@@ -1,24 +1,23 @@
-# Making uncooperative models call tools
+# Notes: making uncooperative models call tools
 
-Tool-calling is the one thing a coding agent can't skip: if the model never produces a
-call the harness can execute, nothing else matters. Testing a dozen small local models,
-it breaks in three structurally different places — and two of them are the harness's
-fault, not the model's. This documents what openharn does about each, and (bluntly) where
-it can't help.
+If a small model never produces a tool call the harness can execute, nothing else in the
+agent matters. Testing a dozen local models on CPU, tool-calling broke in three different
+places — two of which the harness can work around, one it can't. These are notes on what
+openharn does about each, and where it stops helping.
 
 ## Three places it breaks
 
-| Where | What happens | Example (observed) | Harness can fix? |
+| Where | What happens | Example (observed) | Workaround? |
 |---|---|---|---|
-| **Model** | emits no structured call, just prose | LFM2-v2 writes ```` ```bash\nglob src/*.rs``` ```` | no |
-| **Runtime** | model emits a *valid* call the server won't parse | Granite-3.1 emits `<tool_call>[…]`; llama.cpp watches for `<\|tool_call\|>` → `tool_calls: null` | **yes** |
-| **Server** | no tool API at all | bitnet.cpp → `500: Unsupported param: tools` | **yes** |
+| Model | emits no structured call, just prose | LFM2-v2 writes ```` ```bash\nglob src/*.rs``` ```` | no |
+| Runtime | model emits a *valid* call the server won't parse | Granite-3.1 emits `<tool_call>[…]`; llama.cpp watches for `<\|tool_call\|>` → `tool_calls: null` | yes |
+| Server | no tool API at all | bitnet.cpp → `500: Unsupported param: tools` | yes |
 
-## Fix 1 — recover a call the runtime dropped
+## Recovering a call the runtime dropped
 
-Granite-3.1 emits a correct call; llama.cpp just doesn't parse it, because the model
-writes `<tool_call>` while the template's trigger is `<\|tool_call\|>`. The call lands in
-the content instead of `tool_calls`:
+Granite-3.1 emits a correct call; llama.cpp doesn't parse it, because the model writes
+`<tool_call>` while the template's trigger is `<\|tool_call\|>`. The call lands in content
+instead of `tool_calls`:
 
 ```
 content:    <tool_call>[{"arguments": {"pattern": "src/**/*.rs"}, "name": "glob"}]
@@ -26,70 +25,57 @@ tool_calls: null
 ```
 
 `parse_text_tool_calls` (in [`src/agent.rs`](../src/agent.rs)) catches this when the
-native parse is empty: it finds a `<tool_call>`/`<|tool_call|>` marker + JSON (list or a
-single `{function:{…}}` object) and synthesizes the `tool_calls`. It only fires when the
-server returned nothing, so a normal answer is never misread.
+native parse is empty: find a `<tool_call>`/`<|tool_call|>` marker + JSON (a list, or a
+single `{function:{…}}` object), synthesize the `tool_calls`. It only runs when the server
+returned nothing, so a normal answer isn't misread as a call.
 
-## Fix 2 — drive a server with no tool API
+## Driving a server with no tool API
 
-bitnet.cpp's server rejects the `tools` field outright. `OPENHARN_PROMPT_TOOLS=1` moves
-tools out of the API: it describes them in the system prompt, omits `tools`, and — via
-`flatten_for_prompt_tools` — rewrites the internal tool-call/tool-result history into
-plain `system`/`user`/`assistant` messages any server accepts. The model's text call comes
-back and Fix 1 recovers it. openharn's own loop never knows the difference.
+bitnet.cpp's server rejects the `tools` field. `OPENHARN_PROMPT_TOOLS=1` moves tools into
+the prompt: describe them in the system message, omit `tools`, and (via
+`flatten_for_prompt_tools`) rewrite the internal tool-call/tool-result history into plain
+`system`/`user`/`assistant` messages any server accepts. The model's text call comes back
+and the recovery above picks it up. openharn's loop is unchanged.
 
-## What this actually buys you (and what it doesn't)
+## Forcing the format with a grammar
 
-Be precise, because the distinction is the whole point: these two fixes make a call
-**reach the tool**. They do not make a bad model **choose well**.
+`OPENHARN_STRICT_TOOLS=1` attaches a GBNF grammar (generated from the tool schemas by
+`tool_grammar`) that constrains the reply to a schema-valid call or plain text: valid tool
+names, only known argument keys, typed/enum values. A weak model then can't invent a field
+or malform JSON.
 
-Concretely, against a self-built bitnet.cpp server (BitNet-b1.58-2B-4T, i2_s, CPU):
-
-- Prompt-tools works — BitNet dispatches a real tool call where before it got a `500`.
-- But its *judgment* is unusable. Asked to find `Config`, it looped the same broken call
-  until the circuit breaker stopped it:
-  ```
-  · grep {"include":"Config","path":"/src/config","scope":"system"}   (×3, then stopped)
-  ```
-  `include` isn't the search field (`pattern` is), the path is invented, and `scope:system`
-  dodges the project check. All valid *keys*; all wrong *choices*.
-
-So the honest summary: the tested weak models (Granite-3.1-1b-a400m, BitNet-2B) go from
-"call vanishes / 500s" to "call dispatches, then the model fails the task for a real
-reason." That's a genuine harness improvement — it would let a model with **good judgment
-and sloppy formatting** succeed — but it is not, on these models, an end-to-end fix. It
-isn't dressed up as one.
-
-## Fix 3 — force the *format* with a grammar
-
-For the "sloppy formatting" case there's a third lever: `OPENHARN_STRICT_TOOLS=1` attaches
-a GBNF grammar (generated from the tool schemas by `tool_grammar`) that constrains the
-reply to a schema-valid call or plain text — valid tool names, only known argument keys,
-typed/enum values. A weak model then *cannot* invent a field or malform JSON.
-
-Evidence it's actually applied: restrict to `glob` only and ask BitNet to *search* (a
-`grep` job). It is forced to a valid `glob` call — it cannot emit the `grep` it would
-otherwise reach for:
+Check that it's actually applied — restrict to `glob` only, ask BitNet to *search* (a
+`grep` job). It's forced to a valid `glob` call; it can't emit the `grep` it would reach
+for:
 
 ```
 OPENHARN_TOOLS=glob OPENHARN_STRICT_TOOLS=1  →  · glob {"path":".","pattern":"*.rust"}
 ```
 
-Note `*.rust` (should be `*.rs`) — the grammar fixed the *format*, not the *judgment*. That
-is exactly the boundary: strictness kills the "can't format" failures; nothing here kills
-"can't decide."
+## What this buys, and what it doesn't
 
-## The line
+These three workarounds make a call *reach* the tool. They don't make a bad model *choose
+well*. Against a self-built bitnet.cpp server (BitNet-b1.58-2B-4T, i2_s, CPU):
 
-openharn's bet is that the harness matters more than the model — meet the model where it
-is. These three fixes move the failure boundary from "the harness gave up" (the call
-vanished, the server 500'd, the JSON was malformed) to "the model genuinely can't choose
-the right tool." That second boundary is a real property of the model, and no harness
-crosses it. Which model families do clear it on CPU:
-[`small-model-tool-calling.md`](small-model-tool-calling.md).
+- Prompt-tools works — BitNet dispatches a call where it previously got a `500`.
+- Its judgment doesn't. Asked to find `Config`, it looped the same broken call until the
+  circuit breaker stopped it:
+  ```
+  · grep {"include":"Config","path":"/src/config","scope":"system"}   (×3, then stopped)
+  ```
+  `include` isn't the search field (`pattern` is), the path is invented, `scope:system`
+  dodges the project check. Valid keys, wrong choices.
+- Even with the grammar, note `*.rust` above (should be `*.rs`) — format fixed, judgment
+  not.
 
----
+So on the tested weak models (Granite-3.1-1b-a400m, BitNet-2B) the result is: calls go
+from "vanish / 500" to "dispatch, then the model fails the task for a real reason." That's
+a real harness improvement — it would let a model with good judgment and sloppy formatting
+succeed — but on these models it isn't an end-to-end fix. Strictness kills the
+"can't-format" failures; nothing here kills "can't-decide," which is a model property.
 
-Reproduce: `OPENHARN_PROMPT_TOOLS=1` / `OPENHARN_STRICT_TOOLS=1` / `OPENHARN_NARROW=1`
-against your endpoint (see [`adapting-openharn.md`](adapting-openharn.md)); all three
-mechanisms are unit-tested in [`src/agent.rs`](../src/agent.rs).
+Which model families clear that bar on CPU:
+[`small-model-tool-calling.md`](small-model-tool-calling.md). All three mechanisms are
+unit-tested in [`src/agent.rs`](../src/agent.rs); reproduce with `OPENHARN_PROMPT_TOOLS=1`
+/ `OPENHARN_STRICT_TOOLS=1` / `OPENHARN_NARROW=1` (see
+[`adapting-openharn.md`](adapting-openharn.md)).

@@ -131,23 +131,25 @@ Four files:
 
 No agent framework. Dependencies: `reqwest`, `serde`, `walkdir`, `regex`, `glob`.
 
-## Research
+## Notes
 
-Write-ups from building and stress-testing openharn against real small models on CPU:
+Notes from building and stress-testing openharn against real small models on CPU:
 
-- [**Small-model tool-calling**](docs/small-model-tool-calling.md) — why some models
-  fail to call tools (token-level evidence) + a same-prompt benchmark of a dozen LFM /
-  LFM2.5 / Gemma-E2B / Granite GGUFs. TL;DR: tool-calling tracks model *family and
-  post-training*, not the quant tier.
-- [**Adaptive tool-calling**](docs/adaptive-tool-calling.md) — the three structural ways
-  tool-calling breaks (model / runtime / server) and how the harness recovers each,
-  including prompt-tools mode for servers with no tool API.
-- [**The reasoning tax**](docs/reasoning-tax.md) — why *thinking*, not tokens/sec,
-  decides CPU agent latency; the 3–6× win from reasoning-off; and why MoE size ≠ speed.
-- [**BitNet on CPU**](docs/bitnet-on-cpu.md) — a field report: building bitnet.cpp,
-  BitNet's hardware-sensitive speed, and whether a 1.58-bit model can actually agent.
+- [**Which small models can call tools on CPU**](docs/small-model-tool-calling.md) — a
+  same-prompt benchmark of a dozen LFM / LFM2.5 / Gemma-E2B / Granite GGUFs, plus a
+  token-level look at one that can't. Tool-calling tracks model family and post-training,
+  not the quant tier.
+- [**Making uncooperative models call tools**](docs/adaptive-tool-calling.md) — the three
+  places tool-calling breaks (model / runtime / server) and the workarounds, including
+  prompt-tools mode for servers with no tool API.
+- [**Reasoning tokens dominate CPU latency**](docs/reasoning-tax.md) — thinking, not
+  tokens/sec, sets per-turn time; the 3–6× win from reasoning-off; MoE size ≠ speed.
+- [**Running BitNet on CPU**](docs/bitnet-on-cpu.md) — building bitnet.cpp, BitNet's
+  hardware-sensitive speed, and finding out it can't reliably use tools.
+- [**Adapting openharn**](docs/adapting-openharn.md) — modes and how to modify it for your
+  model / server / use case.
 
-The benchmark harness is [`tests/benchmark.py`](tests/benchmark.py); raw results in
+Benchmark harness: [`tests/benchmark.py`](tests/benchmark.py); raw results in
 `tests/bench_logs/`.
 
 ## Credits & license
