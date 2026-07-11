@@ -110,4 +110,4 @@ actually clear it on CPU: [`small-model-tool-calling.md`](small-model-tool-calli
 
 All three mechanisms are unit-tested in [`src/agent.rs`](../src/agent.rs); reproduce with
 `OPENHARN_PROMPT_TOOLS=1` / `OPENHARN_STRICT_TOOLS=1` / `OPENHARN_NARROW=1` (see
-[`adapting-openharn.md`](adapting-openharn.md)).
+[`adapting-openharn.md`](../docs/adapting-openharn.md)).

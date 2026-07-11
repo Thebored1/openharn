@@ -113,4 +113,4 @@ model *choose* well. If a model puts the search term in the wrong (but valid) fi
 at a plausible-but-wrong path, or loops on failure, that's model judgment — strictness and
 grounding raise the floor and the circuit breaker stops the spiral, but they can't supply
 competence the model lacks. Which families clear that bar on CPU:
-[`small-model-tool-calling.md`](small-model-tool-calling.md).
+[`small-model-tool-calling.md`](../notes/small-model-tool-calling.md).

@@ -115,7 +115,7 @@ Override via env: `OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHARN_PORT`.
   model.
 - The **LFM2-v2 `8B-A1B` base won't emit tool calls at any quant** (Q3 → Q4) — it
   writes a Markdown ```` ```bash ```` fence instead. See
-  [`small-model-tool-calling.md`](small-model-tool-calling.md) for the full study and
+  [`small-model-tool-calling.md`](../notes/small-model-tool-calling.md) for the full study and
   the 11-model benchmark.
 - Reasoning models are more reliable but pay a **thinking tax** (100s–1000s of tokens
   per turn) that dominates CPU wall-clock.

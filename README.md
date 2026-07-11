@@ -23,7 +23,7 @@ context — so the small model behaves.
 **Built for weak hardware.** The whole point is to run a *small* model as well as it
 can on a modest, **CPU-only** machine — no serious GPU required. openharn will happily
 talk to a GPU-backed or cloud endpoint, but that isn't the target: the defaults, the
-launcher scripts, and the [benchmarks](docs/small-model-tool-calling.md) all assume
+launcher scripts, and the [benchmarks](notes/small-model-tool-calling.md) all assume
 CPU inference (`llama-server -ngl 0`). If a change only helps on a big GPU, it's out
 of scope.
 
@@ -60,7 +60,7 @@ of scope.
 
 ## Recommended model
 
-Best in testing so far (CPU, from the [benchmark](docs/small-model-tool-calling.md)):
+Best in testing so far (CPU, from the [benchmark](notes/small-model-tool-calling.md)):
 **`LFM2.5-8B-A1B-APEX-I-Compact`** — reliably emits tool calls (4/4 on the scenario),
 the best balance of speed × size × reasoning of the tested set. Run it reasoning-off
 (`OPENHARN_NO_THINK=1`) for ~3× faster turns on CPU. Avoid the `LFM2-v2 8B-A1B` base —
@@ -135,16 +135,16 @@ No agent framework. Dependencies: `reqwest`, `serde`, `walkdir`, `regex`, `glob`
 
 Notes from building and stress-testing openharn against real small models on CPU:
 
-- [**Which small models can call tools on CPU**](docs/small-model-tool-calling.md) — a
+- [**Which small models can call tools on CPU**](notes/small-model-tool-calling.md) — a
   same-prompt benchmark of a dozen LFM / LFM2.5 / Gemma-E2B / Granite GGUFs, plus a
   token-level look at one that can't. Tool-calling tracks model family and post-training,
   not the quant tier.
-- [**Making uncooperative models call tools**](docs/adaptive-tool-calling.md) — the three
+- [**Making uncooperative models call tools**](notes/adaptive-tool-calling.md) — the three
   places tool-calling breaks (model / runtime / server) and the workarounds, including
   prompt-tools mode for servers with no tool API.
-- [**Reasoning tokens dominate CPU latency**](docs/reasoning-tax.md) — thinking, not
+- [**Reasoning tokens dominate CPU latency**](notes/reasoning-tax.md) — thinking, not
   tokens/sec, sets per-turn time; the 3–6× win from reasoning-off; MoE size ≠ speed.
-- [**Running BitNet on CPU**](docs/bitnet-on-cpu.md) — building bitnet.cpp, BitNet's
+- [**Running BitNet on CPU**](notes/bitnet-on-cpu.md) — building bitnet.cpp, BitNet's
   hardware-sensitive speed, and finding out it can't reliably use tools.
 - [**Adapting openharn**](docs/adapting-openharn.md) — modes and how to modify it for your
   model / server / use case.
