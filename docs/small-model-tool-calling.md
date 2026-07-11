@@ -136,7 +136,7 @@ A natural first hypothesis (and a common, correct critique of naive harnesses) i
 JSON-only parser fails to recognize it. We tested this directly by inspecting the
 raw `content` stream — not the parsed field — across three presentations:
 
-| Attempt | `<|tool_call_start|>` in content? | `tool_calls` | Output |
+| Attempt | `<\|tool_call_start\|>` in content? | `tool_calls` | Output |
 |---|---|---|---|
 | `tool_choice: auto` | **no** | null | ```` ```bash\nglob 'src/*.rs'``` ```` |
 | system prompt cueing tool use | **no** | null | Markdown fence |
@@ -174,10 +174,10 @@ special tokens and not split into characters:
 
 | String | Tokens | ID |
 |---|---|---|
-| `<|tool_list_start|>` | 1 | 8 |
-| `<|tool_call_start|>` | 1 | 10 |
-| `<|tool_call_end|>` | 1 | 11 |
-| `<|im_start|>` | 1 | 6 |
+| `<\|tool_list_start\|>` | 1 | 8 |
+| `<\|tool_call_start\|>` | 1 | 10 |
+| `<\|tool_call_end\|>` | 1 | 11 |
+| `<\|im_start\|>` | 1 | 6 |
 
 Embedded in text, the string still resolves to the single special token:
 `x<|tool_call_start|>[glob(pattern="src")]<|tool_call_end|>` →
