@@ -118,9 +118,10 @@ reason — unreliable at *which* tool and *what* args, not "too small to attempt
 (h-tiny) uses a shape llama.cpp parses natively; it's a viable non-LFM option but doesn't
 beat APEX-Compact.
 
-Takeaway: a 0/4 can be harness *or* model — check which before concluding. The
-"active-param floor" framing was too crude; format/selection reliability is a separate axis
-from raw capability.
+Takeaway: a 0/4 can be harness *or* model — I conflated them here, which is the case for
+separating the failure layers explicitly ([`adaptive-tool-calling.md`](adaptive-tool-calling.md)).
+The "active-param floor" framing was too crude; format/selection reliability is a separate
+axis from raw capability.
 
 ## Model list
 
