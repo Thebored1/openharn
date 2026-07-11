@@ -8,16 +8,11 @@ tier.
 
 ## Setup
 
-| | |
-|---|---|
-| Agent | openharn (Rust) |
-| Server | `llama.cpp` / `llama-server` build 9608 |
-| Flags | `--jinja --ctx-size 8192 -ngl 0 --no-warmup` (CPU-only) |
-| Hardware | Intel AVX2 laptop, Windows 11; also a Ryzen box |
-
-CPU-only throughout: full GPU offload (`-ngl 99`) with a 16k KV cache OOM-crashed the
-4 GB laptop GPU immediately, and these are A1B MoE models (~1B active params), so CPU is
-usable (~20–35 tok/s).
+openharn (Rust) driving `llama-server` (llama.cpp build 9608) with
+`--jinja --ctx-size 8192 -ngl 0 --no-warmup`, on an Intel AVX2 laptop (Windows 11) and a
+Ryzen box. CPU-only throughout: full GPU offload with a 16k KV cache OOM-crashed the 4 GB
+laptop GPU immediately, and these are A1B MoE models (~1B active params), so CPU is fine
+(~20–35 tok/s).
 
 ## Case: LFM2-8B-A1B-Q3_K_XL never calls a tool
 
@@ -29,14 +24,10 @@ CONTENT:    "```bash\nglob src/*.rs\n```"
 TOOL_CALLS: null
 ```
 
-The model wants to search — it just writes a Markdown shell fence instead of a call. Ruling
-out the obvious causes:
-
-| Attempt | `<\|tool_call_start\|>` in content? | `tool_calls` | Output |
-|---|---|---|---|
-| `tool_choice: auto` | no | null | ```` ```bash\nglob 'src/*.rs'``` ```` |
-| system prompt cueing tools | no | null | Markdown fence |
-| `tool_choice: "required"` | no | null | Markdown fence (5 s — no grammar built) |
+The model wants to search — it just writes a Markdown shell fence instead of a call. It's
+not the request shape: `tool_choice: auto`, cueing tools in the system prompt, and
+`tool_choice: "required"` all give the same Markdown fence with `tool_calls: null` and no
+`<|tool_call_start|>` token anywhere in the content.
 
 The delimiters are absent entirely, so this isn't a parser shape-mismatch (there's nothing
 to recover). The rendered prompt is the canonical LFM2 tool block — same as
