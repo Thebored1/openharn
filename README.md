@@ -129,12 +129,22 @@ No agent framework. Dependencies: `reqwest`, `serde`, `walkdir`, `regex`, `glob`
 
 ## Research
 
-[`docs/small-model-tool-calling.md`](docs/small-model-tool-calling.md) — a
-reproducible study of *why* some small models fail to call tools (with token-level
-evidence) and a same-prompt benchmark of eleven LFM / LFM2.5 / Gemma-E2B GGUF builds
-driven through openharn on CPU. TL;DR: tool-calling competence tracks the model
-family and post-training, not the quantization tier. The benchmark harness is
-[`tests/benchmark.py`](tests/benchmark.py); raw results live in `tests/bench_logs/`.
+Write-ups from building and stress-testing openharn against real small models on CPU:
+
+- [**Small-model tool-calling**](docs/small-model-tool-calling.md) — why some models
+  fail to call tools (token-level evidence) + a same-prompt benchmark of a dozen LFM /
+  LFM2.5 / Gemma-E2B / Granite GGUFs. TL;DR: tool-calling tracks model *family and
+  post-training*, not the quant tier.
+- [**Adaptive tool-calling**](docs/adaptive-tool-calling.md) — the three structural ways
+  tool-calling breaks (model / runtime / server) and how the harness recovers each,
+  including prompt-tools mode for servers with no tool API.
+- [**The reasoning tax**](docs/reasoning-tax.md) — why *thinking*, not tokens/sec,
+  decides CPU agent latency; the 3–6× win from reasoning-off; and why MoE size ≠ speed.
+- [**BitNet on CPU**](docs/bitnet-on-cpu.md) — a field report: building bitnet.cpp,
+  BitNet's hardware-sensitive speed, and whether a 1.58-bit model can actually agent.
+
+The benchmark harness is [`tests/benchmark.py`](tests/benchmark.py); raw results in
+`tests/bench_logs/`.
 
 ## Credits & license
 
