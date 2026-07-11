@@ -87,26 +87,36 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     // an already-finished think state and skips reasoning — much faster on CPU. The
     // prefill is sent only, never stored in `history`.
     let no_think = std::env::var_os("OPENHARN_NO_THINK").is_some();
+    // Prompt-tools: for a server with NO native tool-calling (e.g. an old llama.cpp fork
+    // like bitnet.cpp, which 500s on `tools`), describe the tools in the system prompt and
+    // omit the `tools` field. Text tool-calls in the reply are recovered by
+    // parse_text_tool_calls, and the running history is flattened to plain system/user/
+    // assistant roles on the wire so no server chokes on tool_calls / tool-role messages.
+    let prompt_tools = std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
 
     for _ in 0..cfg.max_turns {
         // Keep the conversation within the model's context before every request.
         fit_context(history, budget);
-        let mut messages = Value::Array(history.clone());
+        let mut wire = if prompt_tools {
+            flatten_for_prompt_tools(history)
+        } else {
+            history.clone()
+        };
         if no_think {
-            if let Some(arr) = messages.as_array_mut() {
-                arr.push(json!({ "role": "assistant", "content": "<think></think>" }));
-            }
+            wire.push(json!({ "role": "assistant", "content": "<think></think>" }));
         }
-        let body = json!({
+        let mut body = json!({
             "model": cfg.model,
-            "messages": messages,
-            "tools": tools::schemas(),
-            "tool_choice": "auto",
+            "messages": wire,
             "temperature": cfg.temperature,
             "stream": true,
             // final chunk carries usage (and llama-server adds `timings`) → tok/s
             "stream_options": { "include_usage": true },
         });
+        if !prompt_tools {
+            body["tools"] = tools::schemas();
+            body["tool_choice"] = json!("auto");
+        }
         // Send with one retry — a transient connection blip (server briefly busy,
         // a reset socket) resolves on a fresh connection.
         let resp = {
@@ -473,6 +483,89 @@ fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
     if calls.is_empty() { None } else { Some(calls) }
 }
 
+/// Prompt-tools mode: render the tool set as a text description + the exact call format
+/// the model should emit (what `parse_text_tool_calls` recovers). Used when the server
+/// has no native tool-calling.
+fn tool_prompt() -> String {
+    let mut s = String::from(
+        "You do NOT have a tool API. To call a tool, reply with ONLY this line and nothing else:\n\
+         <tool_call>[{\"name\": \"<tool>\", \"arguments\": { ... }}]\n\
+         Otherwise, answer the user normally. Available tools:\n",
+    );
+    if let Some(arr) = tools::schemas().as_array() {
+        for t in arr {
+            let f = &t["function"];
+            let name = f["name"].as_str().unwrap_or("");
+            let desc = f["description"].as_str().unwrap_or("");
+            let required: Vec<&str> = f["parameters"]["required"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            let params = f["parameters"]["properties"]
+                .as_object()
+                .map(|o| {
+                    o.keys()
+                        .map(|k| if required.contains(&k.as_str()) { k.clone() } else { format!("[{k}]") })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let short = desc.split(['.', '\n']).next().unwrap_or(desc);
+            s.push_str(&format!("- {name}({params}): {short}\n"));
+        }
+    }
+    s
+}
+
+/// Render internal `tool_calls` back into the text form the model is told to emit, so a
+/// prior tool-calling assistant turn round-trips as plain text on the wire.
+fn render_calls_text(tool_calls: &Value) -> String {
+    let items: Vec<Value> = tool_calls
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|tc| {
+                    let name = tc["function"]["name"].as_str().unwrap_or("");
+                    let args_raw = tc["function"]["arguments"].as_str().unwrap_or("{}");
+                    let args: Value = serde_json::from_str(args_raw).unwrap_or_else(|_| json!({}));
+                    json!({ "name": name, "arguments": args })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    format!("<tool_call>{}", Value::Array(items))
+}
+
+/// Flatten openharn's internal history (system + tool_calls + tool-role results) into
+/// plain system/user/assistant messages a tool-unaware server accepts: the tools are
+/// described in the system prompt, assistant tool_calls become their text form, and tool
+/// results become user messages.
+fn flatten_for_prompt_tools(history: &[Value]) -> Vec<Value> {
+    history
+        .iter()
+        .map(|m| match m["role"].as_str().unwrap_or("") {
+            "system" => {
+                let base = m["content"].as_str().unwrap_or("");
+                json!({ "role": "system", "content": format!("{base}\n\n{}", tool_prompt()) })
+            }
+            "assistant" if m.get("tool_calls").is_some() => {
+                let text = render_calls_text(&m["tool_calls"]);
+                let content = m["content"].as_str().filter(|s| !s.is_empty());
+                let full = match content {
+                    Some(c) => format!("{c}\n{text}"),
+                    None => text,
+                };
+                json!({ "role": "assistant", "content": full })
+            }
+            "tool" => {
+                let c = m["content"].as_str().unwrap_or("");
+                json!({ "role": "user", "content": format!("Tool result:\n{c}") })
+            }
+            _ => m.clone(),
+        })
+        .collect()
+}
+
 /// In reasoning-off mode a hybrid-thinking model still leaks a (shortened) chain of
 /// thought into the content wrapped in stray `<think>…</think>` tags. Keep only the
 /// real answer: everything after the last `</think>`, with any tags removed.
@@ -515,6 +608,29 @@ mod tests {
         // a normal answer must NOT be misread as a tool call
         assert!(parse_text_tool_calls("The src directory contains agent.rs and main.rs.").is_none());
         assert!(parse_text_tool_calls("").is_none());
+    }
+
+    #[test]
+    fn prompt_tools_flattens_to_plain_roles() {
+        let hist = vec![
+            json!({"role":"system","content":"SYS"}),
+            json!({"role":"user","content":"find configs"}),
+            json!({"role":"assistant","tool_calls":[{"id":"c0","type":"function",
+                "function":{"name":"grep","arguments":"{\"pattern\":\"Config\"}"}}]}),
+            json!({"role":"tool","tool_call_id":"c0","content":"src/app.py:1: class Config"}),
+        ];
+        let wire = flatten_for_prompt_tools(&hist);
+        // system carries the tool descriptions + the call format
+        assert!(wire[0]["content"].as_str().unwrap().contains("<tool_call>"));
+        assert!(wire[0]["content"].as_str().unwrap().contains("grep"));
+        // the assistant tool_call became its text form, no tool_calls field on the wire
+        assert!(wire[2].get("tool_calls").is_none());
+        assert!(wire[2]["content"].as_str().unwrap().contains("<tool_call>"));
+        assert!(wire[2]["content"].as_str().unwrap().contains("Config"));
+        // the tool result became a plain user message (no tool role reaches the server)
+        assert_eq!(wire[3]["role"], "user");
+        assert!(wire[3]["content"].as_str().unwrap().contains("Tool result"));
+        assert!(wire.iter().all(|m| m["role"] != "tool"));
     }
 
     #[test]

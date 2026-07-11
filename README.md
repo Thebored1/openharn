@@ -48,6 +48,10 @@ of scope.
 - **Tool-call recovery** — if the server leaves a structured tool call as *text* (e.g.
   Granite's `<tool_call>[{…}]` / `<|tool_call|>`, which llama.cpp may not parse),
   openharn recovers and dispatches it instead of stalling.
+- **Prompt-tools mode** (`OPENHARN_PROMPT_TOOLS=1`) — for a server with *no* native
+  tool-calling at all (e.g. an old llama.cpp fork like bitnet.cpp), openharn describes
+  the tools in the system prompt, omits the `tools` field, and flattens the history to
+  plain roles — so it can still drive tools on a limited endpoint.
 - **Local or cloud** — any OpenAI-compatible endpoint via `base_url` + optional key.
 
 ## Recommended model
