@@ -52,6 +52,10 @@ of scope.
   tool-calling at all (e.g. an old llama.cpp fork like bitnet.cpp), openharn describes
   the tools in the system prompt, omits the `tools` field, and flattens the history to
   plain roles — so it can still drive tools on a limited endpoint.
+- **Strict & narrow modes** — `OPENHARN_STRICT_TOOLS=1` grammar-forces every reply into a
+  *schema-valid* tool call (a weak model can't invent a field or malform a call);
+  `OPENHARN_NARROW=1` locks it to read-only navigation for a maximally reliable agent.
+  See the [adaptation guide](docs/adapting-openharn.md).
 - **Local or cloud** — any OpenAI-compatible endpoint via `base_url` + optional key.
 
 ## Recommended model

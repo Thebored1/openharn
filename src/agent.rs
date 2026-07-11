@@ -86,19 +86,33 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     // <think></think> assistant turn so a hybrid-thinking model (LFM2.5) continues from
     // an already-finished think state and skips reasoning — much faster on CPU. The
     // prefill is sent only, never stored in `history`.
-    let no_think = std::env::var_os("OPENHARN_NO_THINK").is_some();
-    // Prompt-tools: for a server with NO native tool-calling (e.g. an old llama.cpp fork
-    // like bitnet.cpp, which 500s on `tools`), describe the tools in the system prompt and
-    // omit the `tools` field. Text tool-calls in the reply are recovered by
-    // parse_text_tool_calls, and the running history is flattened to plain system/user/
-    // assistant roles on the wire so no server chokes on tool_calls / tool-role messages.
-    let prompt_tools = std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
+    // Reliability / scope knobs — most useful for weak models and weak servers:
+    //   OPENHARN_TOOLS=a,b,c    restrict the agent to a subset of tools
+    //   OPENHARN_NARROW=1       preset: read-only navigation (read, grep, glob), strict + prompt-tools
+    //   OPENHARN_STRICT_TOOLS=1 grammar-constrain the reply to a *schema-valid* tool call or plain
+    //                           text — a weak model then cannot invent field names or malform a call
+    //   OPENHARN_PROMPT_TOOLS=1 describe tools in the prompt & omit the `tools` field (no-native-tools servers)
+    // strict/narrow imply prompt-tools: a grammar can't be combined with the native `tools` field.
+    let narrow = std::env::var_os("OPENHARN_NARROW").is_some();
+    let allowed: Option<Vec<String>> = if narrow {
+        Some(["read", "grep", "glob"].iter().map(|s| s.to_string()).collect())
+    } else {
+        std::env::var("OPENHARN_TOOLS").ok().map(|s| {
+            s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+        })
+    };
+    let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
+    let prompt_tools = strict || std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
+    // no_think prefills a `<think></think>` assistant turn — which is itself grammar-invalid,
+    // so it can't combine with strict's grammar (and weak models don't reason anyway).
+    let no_think = std::env::var_os("OPENHARN_NO_THINK").is_some() && !strict;
+    let schemas = active_schemas(&allowed);
 
     for _ in 0..cfg.max_turns {
         // Keep the conversation within the model's context before every request.
         fit_context(history, budget);
         let mut wire = if prompt_tools {
-            flatten_for_prompt_tools(history)
+            flatten_for_prompt_tools(history, &schemas)
         } else {
             history.clone()
         };
@@ -113,8 +127,13 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             // final chunk carries usage (and llama-server adds `timings`) → tok/s
             "stream_options": { "include_usage": true },
         });
-        if !prompt_tools {
-            body["tools"] = tools::schemas();
+        if prompt_tools {
+            // grammar-constrain the output to a schema-valid tool call (or plain text)
+            if strict {
+                body["grammar"] = json!(tool_grammar(&schemas));
+            }
+        } else {
+            body["tools"] = schemas.clone();
             body["tool_choice"] = json!("auto");
         }
         // Send with one retry — a transient connection blip (server briefly busy,
@@ -189,6 +208,12 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
                 // exact repeat — don't re-execute; tell the model to change course
                 "You already made this exact tool call and saw its result. Repeating it will not change anything. Take a DIFFERENT action, or answer the user with what you know (including telling them something was not found)."
                     .to_string()
+            } else if allowed.as_ref().is_some_and(|a| !a.iter().any(|t| t == name)) {
+                // narrow / restricted mode — this tool isn't available
+                format!(
+                    "'{name}' is not available in this mode. Available tools: {}.",
+                    allowed.as_ref().unwrap().join(", ")
+                )
             } else {
                 session.execute(name, &args)
             };
@@ -483,16 +508,122 @@ fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
     if calls.is_empty() { None } else { Some(calls) }
 }
 
+/// The tool schemas advertised for this run, optionally filtered to an allowed subset
+/// (`OPENHARN_TOOLS` / `OPENHARN_NARROW`). `None` = all ten tools.
+fn active_schemas(allowed: &Option<Vec<String>>) -> Value {
+    match allowed {
+        None => tools::schemas(),
+        Some(names) => Value::Array(
+            tools::schemas()
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter(|t| {
+                            t["function"]["name"]
+                                .as_str()
+                                .is_some_and(|n| names.iter().any(|x| x == n))
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+        ),
+    }
+}
+
+/// A generic-JSON tail shared by every generated grammar (for argument values whose type
+/// we don't tightly constrain — arrays, nested objects).
+const GRAMMAR_TAIL: &str = r#"value ::= object | array | string | number | "true" | "false" | "null"
+object ::= "{" ws ( string ws ":" ws value ( ws "," ws string ws ":" ws value )* )? ws "}"
+array ::= "[" ws ( value ( ws "," ws value )* )? ws "]"
+string ::= "\"" ( [^"\\] | "\\" ["\\/bfnrt] )* "\""
+number ::= "-"? [0-9]+ ( "." [0-9]+ )?
+integer ::= "-"? [0-9]+
+boolean ::= "true" | "false"
+ws ::= [ \t\n]*
+"#;
+
+/// The GBNF grammar for a single argument value, tightened by JSON-schema type/enum where
+/// we can (string / integer / boolean / one-of-enum), falling back to generic `value`.
+fn value_rule_for(spec: &Value) -> String {
+    let q = |s: &str| format!("\"\\\"{s}\\\"\"");
+    if let Some(en) = spec["enum"].as_array() {
+        let alts: Vec<String> = en.iter().filter_map(|v| v.as_str()).map(q).collect();
+        if !alts.is_empty() {
+            return format!("( {} )", alts.join(" | "));
+        }
+    }
+    match spec["type"].as_str().unwrap_or("") {
+        "string" => "string".into(),
+        "integer" | "number" => "integer".into(),
+        "boolean" => "boolean".into(),
+        _ => "value".into(),
+    }
+}
+
+/// Generate a GBNF grammar that constrains the model's reply to EITHER a schema-valid
+/// tool call — `<tool_call>[{"name": <known tool>, "arguments": {<only known keys, typed>}}]`
+/// — OR plain text (any reply not starting with `<`). Used in strict/narrow modes so a
+/// weak model physically cannot invent a field name, misname a tool, or malform a call.
+fn tool_grammar(schemas: &Value) -> String {
+    let lit = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut g = String::new();
+    g.push_str("root ::= call | answer\n");
+    g.push_str("answer ::= [^<] rest\n");
+    g.push_str("rest ::= [^\\x00]*\n");
+    g.push_str(&format!(
+        "call ::= {} ws {} ws obj ( ws {} ws obj )* ws {}\n",
+        lit("<tool_call>"), lit("["), lit(","), lit("]")
+    ));
+    let mut obj_alts: Vec<String> = Vec::new();
+    let mut rules = String::new();
+    if let Some(arr) = schemas.as_array() {
+        for t in arr {
+            let name = match t["function"]["name"].as_str() {
+                Some(n) => n,
+                None => continue,
+            };
+            obj_alts.push(format!("t-{name}"));
+            let props = t["function"]["parameters"]["properties"].as_object();
+            let mut kvs: Vec<String> = Vec::new();
+            if let Some(props) = props {
+                for (k, spec) in props {
+                    kvs.push(format!("{} ws {} ws {}", lit(&format!("\"{k}\"")), lit(":"), value_rule_for(spec)));
+                }
+            }
+            if kvs.is_empty() {
+                rules.push_str(&format!("a-{name} ::= {} ws {}\n", lit("{"), lit("}")));
+            } else {
+                rules.push_str(&format!("kv-{name} ::= {}\n", kvs.join(" | ")));
+                rules.push_str(&format!(
+                    "a-{name} ::= {} ws ( kv-{name} ( ws {} ws kv-{name} )* )? ws {}\n",
+                    lit("{"), lit(","), lit("}")
+                ));
+            }
+            rules.push_str(&format!(
+                "t-{name} ::= {} ws {} ws {} ws {} ws {} ws {} ws {} ws a-{name} ws {}\n",
+                lit("{"), lit("\"name\""), lit(":"), lit(&format!("\"{name}\"")),
+                lit(","), lit("\"arguments\""), lit(":"), lit("}")
+            ));
+        }
+    }
+    let obj = if obj_alts.is_empty() { "value".to_string() } else { obj_alts.join(" | ") };
+    g.push_str(&format!("obj ::= {obj}\n"));
+    g.push_str(&rules);
+    g.push_str(GRAMMAR_TAIL);
+    g
+}
+
 /// Prompt-tools mode: render the tool set as a text description + the exact call format
 /// the model should emit (what `parse_text_tool_calls` recovers). Used when the server
 /// has no native tool-calling.
-fn tool_prompt() -> String {
+fn tool_prompt(schemas: &Value) -> String {
     let mut s = String::from(
         "You do NOT have a tool API. To call a tool, reply with ONLY this line and nothing else:\n\
          <tool_call>[{\"name\": \"<tool>\", \"arguments\": { ... }}]\n\
          Otherwise, answer the user normally. Available tools:\n",
     );
-    if let Some(arr) = tools::schemas().as_array() {
+    if let Some(arr) = schemas.as_array() {
         for t in arr {
             let f = &t["function"];
             let name = f["name"].as_str().unwrap_or("");
@@ -540,13 +671,13 @@ fn render_calls_text(tool_calls: &Value) -> String {
 /// plain system/user/assistant messages a tool-unaware server accepts: the tools are
 /// described in the system prompt, assistant tool_calls become their text form, and tool
 /// results become user messages.
-fn flatten_for_prompt_tools(history: &[Value]) -> Vec<Value> {
+fn flatten_for_prompt_tools(history: &[Value], schemas: &Value) -> Vec<Value> {
     history
         .iter()
         .map(|m| match m["role"].as_str().unwrap_or("") {
             "system" => {
                 let base = m["content"].as_str().unwrap_or("");
-                json!({ "role": "system", "content": format!("{base}\n\n{}", tool_prompt()) })
+                json!({ "role": "system", "content": format!("{base}\n\n{}", tool_prompt(schemas)) })
             }
             "assistant" if m.get("tool_calls").is_some() => {
                 let text = render_calls_text(&m["tool_calls"]);
@@ -611,6 +742,20 @@ mod tests {
     }
 
     #[test]
+    fn active_schemas_filters_and_grammar_constrains() {
+        let s = active_schemas(&Some(vec!["glob".into()]));
+        assert_eq!(s.as_array().unwrap().len(), 1, "only glob kept");
+        let g = tool_grammar(&s);
+        // the grammar names glob and its real args, and gives an answer escape hatch
+        assert!(g.contains("root ::= call | answer"));
+        assert!(g.contains(r#""\"glob\"""#));
+        assert!(g.contains(r#""\"pattern\"""#));
+        assert!(g.contains(r#"( "\"project\"" | "\"system\"" )"#)); // scope enum constrained
+        // grep's `include` key must NOT be a valid key for glob (no invented fields)
+        assert!(!g.contains("kv-grep"));
+    }
+
+    #[test]
     fn prompt_tools_flattens_to_plain_roles() {
         let hist = vec![
             json!({"role":"system","content":"SYS"}),
@@ -619,7 +764,7 @@ mod tests {
                 "function":{"name":"grep","arguments":"{\"pattern\":\"Config\"}"}}]}),
             json!({"role":"tool","tool_call_id":"c0","content":"src/app.py:1: class Config"}),
         ];
-        let wire = flatten_for_prompt_tools(&hist);
+        let wire = flatten_for_prompt_tools(&hist, &tools::schemas());
         // system carries the tool descriptions + the call format
         assert!(wire[0]["content"].as_str().unwrap().contains("<tool_call>"));
         assert!(wire[0]["content"].as_str().unwrap().contains("grep"));

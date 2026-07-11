@@ -260,6 +260,15 @@ impl Session {
         let basename_ok = !pattern.contains('/') && !pattern.contains('\\');
         let roots = search_roots(&self.cwd, args);
         let system = is_system_scope(args);
+        // forced grounding: a project-scoped search at a path that doesn't exist gets a
+        // listing of what does, instead of a bare "no matches" it can loop on.
+        if !system {
+            if let Some(root) = roots.first() {
+                if !root.exists() {
+                    return ground_missing_path(root, &self.cwd);
+                }
+            }
+        }
         let mut out: Vec<String> = vec![];
         let mut walked = 0usize;
         let mut capped = false;
@@ -304,6 +313,28 @@ impl Session {
             )
         }
     }
+}
+
+/// Grounding for a search (glob/grep) pointed at a project path that doesn't exist:
+/// name what actually exists so the model corrects instead of re-guessing or looping.
+fn ground_missing_path(path: &Path, cwd: &Path) -> String {
+    let dir = path.parent().filter(|p| p.is_dir()).unwrap_or(cwd);
+    let listing = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .take(30)
+                .map(|en| en.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    format!(
+        "The path '{}' does not exist under the project. {} contains: {}. Use a path that exists, or omit 'path' to search the whole project.",
+        path.display(),
+        dir.display(),
+        listing
+    )
 }
 
 /// A failed read grounds the model with what actually exists in the directory, so
@@ -351,6 +382,13 @@ fn grep(cwd: &Path, args: &Value) -> String {
         .and_then(|p| glob::Pattern::new(p).ok());
     let roots = search_roots(cwd, args);
     let system = is_system_scope(args);
+    if !system {
+        if let Some(root) = roots.first() {
+            if !root.exists() {
+                return ground_missing_path(root, cwd);
+            }
+        }
+    }
     let mut out: Vec<String> = vec![];
     let mut files = 0usize;
     'outer: for root in &roots {

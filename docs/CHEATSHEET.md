@@ -36,6 +36,11 @@ $env:OPENHARN_BASE_URL="http://127.0.0.1:8080/v1"
 | `OPENHARN_SHOW_THINKING` | *(unset)* | set to `1` to stream the raw chain-of-thought instead of the collapsed live meter |
 | `OPENHARN_NO_THINK` | *(unset)* | set to `1` for **reasoning-off** — primes a closed `<think></think>` per turn so a hybrid-thinking model (LFM2.5) skips most reasoning. Much faster on CPU; some quality trade-off. |
 | `OPENHARN_PROMPT_TOOLS` | *(unset)* | set to `1` for **prompt-tools mode** — describe tools in the system prompt and omit the `tools` field, for a server with no native tool-calling (e.g. an old llama.cpp fork / bitnet.cpp). |
+| `OPENHARN_STRICT_TOOLS` | *(unset)* | set to `1` to **grammar-force** every reply into a schema-valid tool call or plain text — a weak model then can't invent field names or malform a call. (Implies prompt-tools.) |
+| `OPENHARN_TOOLS` | *(all)* | comma list to **restrict** the tool set, e.g. `read,grep,glob`. |
+| `OPENHARN_NARROW` | *(unset)* | set to `1` for the **narrow preset** — read-only navigation (`read,grep,glob`) + strict + prompt-tools. The most reliable mode for a weak model. |
+
+Full guide to modes + how to modify openharn: [`adapting-openharn.md`](adapting-openharn.md).
 
 First CLI arg = the working directory the agent operates on (default: cwd).
 
