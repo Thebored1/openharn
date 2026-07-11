@@ -24,6 +24,22 @@ call happened," so the distinction isn't self-evident — which is the whole rea
 worth writing down. A framework that separates failure modes earns its keep precisely when
 someone (me) conflates two of them in practice.
 
+But be honest about what kind of thing this table is. The bottom two rows are clean and
+mechanical — facts about *software*, decidable without the model in the room. Granite's
+mismatch is a literal token string (`<tool_call>` vs `<\|tool_call\|>`); the server either
+accepts a `tools` field or 500s. You can point at the exact byte. The top row is not like
+that. "The model emits prose, not a call" is a joint product of the model's training
+distribution *and* what the harness presented to it — not a stratum sitting underneath the
+other two. The proof is later in this doc: put a grammar on it and the same LFM2-v2 that
+"won't emit the format" emits it. That's a harness lever reaching *into* model behavior, so
+the harness/model boundary isn't a clean seam there.
+
+So treat this as a **diagnostic heuristic, not an architecture**: check these places, in
+this order, before blaming the model. Its value is catching the Granite-style
+misattribution, not describing three real tiers of the world. Two of the rows decompose
+cleanly; the third is a behavioral regime the harness can partly reach into but not fully
+own.
+
 ## Recovering a call the runtime dropped
 
 Granite-3.1 emits a correct call; llama.cpp doesn't parse it, because the model writes
@@ -78,12 +94,19 @@ Same with BitNet through prompt-tools:
 dodges the project check — valid keys, wrong choices. And even grammar-forced,
 `*.rust` above should be `*.rs`: format fixed, judgment not.
 
-So the fixes are real but bounded. On the tested weak models they move the outcome from
-"call vanishes / 500s" to "call dispatches, then the model fails for a real reason." That's
-a genuine improvement — it would let a model with good judgment and sloppy formatting
-succeed — but on these models it isn't end-to-end. Peeling layers 1–3 exposes the model
-layer underneath, which no harness crosses. Which families actually clear it on CPU:
-[`small-model-tool-calling.md`](small-model-tool-calling.md).
+So the fixes are real but bounded, and the boundary is worth stating exactly. It's not a
+layer seam — it cuts *through* the model row. The harness can guarantee **form**: recover a
+dropped call, describe tools when there's no API, grammar-constrain to a schema-valid call.
+It cannot guarantee **judgment**: which tool, what arguments, whether to stop. Even
+grammar-forced, the weak models here pick `glob` when the job needs `grep`, put the schema
+where a value goes, and emit `*.rust` for `*.rs`. The harness reaches into the behavioral
+regime far enough to fix shape; it can't cross into choosing well.
+
+On the tested weak models the fixes move the outcome from "call vanishes / 500s" to "call
+dispatches, then the model fails for a real reason." That's a genuine improvement — it would
+let a model with good judgment and sloppy formatting succeed — but on these models it isn't
+end-to-end, because their failure is on the judgment side of that line. Which families
+actually clear it on CPU: [`small-model-tool-calling.md`](small-model-tool-calling.md).
 
 All three mechanisms are unit-tested in [`src/agent.rs`](../src/agent.rs); reproduce with
 `OPENHARN_PROMPT_TOOLS=1` / `OPENHARN_STRICT_TOOLS=1` / `OPENHARN_NARROW=1` (see
