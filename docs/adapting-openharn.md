@@ -34,7 +34,7 @@ No rebuild needed. Set these before launching openharn.
 | `OPENHARN_NARROW` | preset: `read,grep,glob` **+ strict + prompt-tools** | most reliable narrow agent for a weak model |
 | `OPENHARN_STRICT_TOOLS` | grammar-force every reply to a schema-valid call or plain text | your model malforms calls |
 | `OPENHARN_PROMPT_TOOLS` | describe tools in the prompt, omit the `tools` field | server has no tool API (bitnet.cpp, old forks) |
-| `OPENHARN_MAX_CALLS` | per-turn tool-call limit before grounding fires (default 1) | model spirals, wastes budget |
+| `OPENHARN_MAX_CALLS` | per-turn tool-call limit; excess calls are **truncated** (not executed) and a grounding message tells the model to make fewer calls next turn (default 1) | model makes too many calls per response |
 | `OPENHARN_TOTAL_MAX` | total calls across all turns before tools are removed (default 5) | model never stops calling tools |
 | `OPENHARN_NO_THINK` | suppress a reasoning model's thinking (faster on CPU) | LFM2.5 is too slow |
 | `OPENHARN_SHOW_THINKING` | stream the raw chain-of-thought instead of the meter | debugging what the model thought |
@@ -79,7 +79,9 @@ Each of these is a one-spot change.
 
 **Add / remove / reword a tool** — two spots in `src/tools.rs`:
 1. `schemas()` — the tool list the model sees (name, description, parameters). This also
-   drives the prompt-tools description and the strict grammar automatically.
+   drives the prompt-tools description and the strict grammar automatically.  
+   *System-wide search tools are dedicated `glob_system` and `grep_system` (the `scope`
+   parameter was removed).*
 2. `Session::execute()` — the `match` that runs each tool by name. Add a
    `"mytool" => self.mytool(args),` arm and write the function (takes JSON `args`, returns a
    `String`).
@@ -90,8 +92,8 @@ is picked up everywhere.
 **Stricter / looser** — in `src/agent.rs`: the grammar is `tool_grammar()` (constrains tool
 name, argument keys, value types); the prompt-tools description is `tool_prompt()`; the
 circuit breaker limits per-turn calls (`max_calls`, default 1) and total calls (`total_max`,
-default 5) before injecting a grounding message; context budget is `HISTORY_BUDGET`; result caps
-are `TOOL_RESULT_CAP`.
+default 5) before injecting a grounding message; exact-repeat calls halt after 3 identical
+invocations; context budget is `HISTORY_BUDGET`; result caps are `TOOL_RESULT_CAP`.
 
 **Grounding messages** — in `src/tools.rs`: `ground_missing()` (bad `read`) and
 `ground_missing_path()` (bad `glob`/`grep` path) build the "that doesn't exist; here's what
