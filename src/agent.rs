@@ -191,6 +191,18 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             }
         }
 
+        // Per-turn grounding: if the model made more than MAX_CALLS tool calls,
+        // truncate BEFORE executing so only the first MAX_CALLS are dispatched.
+        // The excess calls are discarded — the model sees it was too eager and must
+        // learn to make fewer calls per turn.
+        let per_turn_truncated = if !no_tools && tool_calls.len() > max_calls {
+            let excess = tool_calls.len() - max_calls;
+            tool_calls.truncate(max_calls);
+            Some(excess)
+        } else {
+            None
+        };
+
         // Record the assistant turn so the next turn's context stays coherent (and
         // the KV-cache prefix stable).
         let mut assistant = json!({ "role": "assistant" });
@@ -231,6 +243,37 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
         if repeats >= 3 {
             println!("\n[stopped: the model kept repeating the same tool call — it's stuck. Try rephrasing.]");
             return;
+        }
+        if let Some(excess) = per_turn_truncated {
+            // Per-turn truncation: the model made too many calls. Feed back what
+            // it got and tell it to make fewer calls next time.
+            let tool_results: Vec<String> = tool_calls.iter().filter_map(|tc| {
+                let id = tc["id"].as_str()?;
+                history.iter().rev().find_map(|m| {
+                    if m["role"].as_str() == Some("tool") && m["tool_call_id"].as_str() == Some(id) {
+                        m["content"].as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+            }).collect();
+            let summary = if tool_results.is_empty() {
+                "No tool results were returned.".to_string()
+            } else {
+                tool_results.join("\n---\n")
+            };
+            println!("\n[per-turn grounding: {} excess calls truncated. {} executed.]", excess, tool_calls.len());
+            history.push(json!({"role": "user", "content": format!(
+                "You made {} tool calls this turn, but only {} {} allowed per turn. You executed only the first {} call(s). The other {} were discarded.\n\nThe results you got are:\n{}\n\nIn your next turn, make at most {} tool call(s) and wait for the results before making more.",
+                tool_calls.len() + excess,
+                max_calls,
+                if max_calls == 1 { "is" } else { "are" },
+                tool_calls.len(),
+                excess,
+                summary,
+                max_calls
+            )}));
+            continue;
         }
         if call_count >= max_calls || total_calls >= total_max {
             let tool_results: Vec<String> = history
@@ -629,10 +672,17 @@ fn tool_grammar(schemas: &Value) -> String {
                     lit("{"), lit(","), lit("}")
                 ));
             }
+            let name_lit = lit(&format!("\"{name}\""));
+            let closing = lit("}");
             rules.push_str(&format!(
-                "t-{name} ::= {} ws {} ws {} ws {} ws {} ws {} ws {} ws a-{name} ws {}\n",
-                lit("{"), lit("\"name\""), lit(":"), lit(&format!("\"{name}\"")),
-                lit(","), lit("\"arguments\""), lit(":"), lit("}")
+                "t-{name} ::= {open} ws {qname} ws {colon} ws {name_lit} ws {comma} ws {qargs} ws {colon} ws a-{name} ws {closing}\n",
+                open = lit("{"),
+                qname = lit("\"name\""),
+                colon = lit(":"),
+                name_lit = name_lit,
+                comma = lit(","),
+                qargs = lit("\"arguments\""),
+                closing = closing
             ));
         }
     }
