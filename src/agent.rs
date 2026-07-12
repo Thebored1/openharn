@@ -184,7 +184,7 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
         // server's parser (expecting a different trigger) leaves in `content`. Recover it
         // so the harness dispatches the tool instead of stalling. Only runs when the
         // native parse produced nothing, so it never overrides a real answer.
-        if tool_calls.is_empty() {
+        if tool_calls.is_empty() && !no_tools {
             if let Some(parsed) = parse_text_tool_calls(&content) {
                 tool_calls = parsed;
                 content.clear(); // the content WAS the call, not an answer
@@ -228,7 +228,11 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
         }
         call_count += tool_calls.len();
         total_calls += tool_calls.len();
-        if repeats >= 10 || call_count >= max_calls || total_calls >= total_max {
+        if repeats >= 3 {
+            println!("\n[stopped: the model kept repeating the same tool call — it's stuck. Try rephrasing.]");
+            return;
+        }
+        if call_count >= max_calls || total_calls >= total_max {
             let tool_results: Vec<String> = history
                 .iter()
                 .filter(|m| m["role"].as_str() == Some("tool"))
@@ -248,7 +252,6 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
                 "You have made {} tool calls so far. The results you got are:\n{}\n\nSTOP calling tools and answer the user with what you now know (including if something was not found).",
                 total_calls, summary
             )}));
-            repeats = 0;
             continue;
         }
     }
@@ -767,6 +770,7 @@ mod tests {
         assert!(parse_text_tool_calls("").is_none());
     }
 
+    #[test]
     #[test]
     fn active_schemas_filters_and_grammar_constrains() {
         let s = active_schemas(&Some(vec!["glob".into()]));
