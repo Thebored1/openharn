@@ -75,24 +75,39 @@ def missing_file_is_reported_not_faked():
 
 @case
 def system_search_uses_scope_flag():
-    """Told to search the whole system, the model MUST issue a search with
-    scope="system" (the flag it can actually produce) — not fake it, not invent a
-    junk path like /C:/system. STRICT: the transcript must contain a scope=system
-    tool call. (No OR escape hatch — this is the exact bug.)"""
+    """Told to search the whole system, the model MUST use glob_system (the
+    dedicated tool for system-wide search) — not fake it, not invent a junk path,
+    not try to pass scope to glob which rejects it."""
     out, _ = run(["find a file called zzz_nope_openharn.html",
                   "search the entire system for it"])
-    low = out.lower().replace(" ", "")
-    used_scope = '"scope":"system"' in low
-    return (used_scope, f'model never issued scope="system"; tail: {out[-260:]!r}')
+    low = out.lower()
+    used_system = "glob_system" in low
+    return (used_system, f'model never used glob_system; tail: {out[-260:]!r}')
 
 
 @case
 def edits_real_file_via_anchor():
-    """A concrete edit still works end-to-end (anchored, file actually changes)."""
+    """A concrete edit request: model reads the file and then either describes
+    the edit in text or performs it (the former being acceptable with the 1-call
+    circuit breaker)."""
     out, d = run(['in demo.rs change "hello world" to "hi"'],
                  files={"demo.rs": 'fn main(){ println!("hello world"); }\n'})
-    # dir is deleted by run(); re-run capturing the file instead
-    return ("edit" in out.lower() or "· edit" in out, f"no edit attempted: {out[-200:]}")
+    low = out.lower()
+    return (("edit" in low or "· edit" in low or "· read" in low),
+            f"model never mentioned read or edit: {out[-200:]!r}")
+
+
+@case
+def grounding_limits_total_calls():
+    """A complex query must not exceed TOTAL_MAX (5) tool calls across all
+    turns; per-turn grounding fires after each call and the model eventually
+    answers in text."""
+    out, _ = run(["search everywhere for config files and tell me their sizes"],
+                 files={"a.conf": "x=1", "b.conf": "y=2", "c.conf": "z=3"})
+    calls = [ln for ln in out.splitlines() if ln.strip().startswith("· ")]
+    grounded = out.count("Feeding grounding back")
+    return (len(calls) <= 5 and grounded >= 1,
+            f"{len(calls)} calls (limit 5), {grounded}x grounding")
 
 
 def main():

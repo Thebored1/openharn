@@ -78,21 +78,25 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     // thorough. Track calls made this run and short-circuit exact repeats.
     let mut seen_calls = std::collections::HashSet::<String>::new();
     let mut budget = HISTORY_BUDGET;
-    // Circuit breaker: if the model keeps re-issuing calls it already made, it's
-    // stuck. The soft "you already did this" nudge isn't always enough for a tiny
-    // model, so hard-stop after a few repeats instead of burning every turn.
+    let max_calls: usize = std::env::var("OPENHARN_MAX_CALLS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let total_max: usize = std::env::var("OPENHARN_TOTAL_MAX")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let mut repeats = 0usize;
+    let mut total_calls = 0usize;
+    let mut no_tools = false;
     // Reasoning-off: with OPENHARN_NO_THINK set, prime each request with a closed
     // <think></think> assistant turn so a hybrid-thinking model (LFM2.5) continues from
     // an already-finished think state and skips reasoning — much faster on CPU. The
     // prefill is sent only, never stored in `history`.
     // Reliability / scope knobs — most useful for weak models and weak servers:
-    //   OPENHARN_TOOLS=a,b,c    restrict the agent to a subset of tools
-    //   OPENHARN_NARROW=1       preset: read-only navigation (read, grep, glob), strict + prompt-tools
-    //   OPENHARN_STRICT_TOOLS=1 grammar-constrain the reply to a *schema-valid* tool call or plain
-    //                           text — a weak model then cannot invent field names or malform a call
-    //   OPENHARN_PROMPT_TOOLS=1 describe tools in the prompt & omit the `tools` field (no-native-tools servers)
-    // strict/narrow imply prompt-tools: a grammar can't be combined with the native `tools` field.
+    //   OPENHARN_TOOLS=a,b,c         restrict the agent to a subset of tools
+    //   OPENHARN_NARROW=1            preset: read-only navigation (read, grep, glob), strict + prompt-tools
+    //   OPENHARN_STRICT_TOOLS=1      grammar-constrain the reply to a *schema-valid* tool call or plain
+    //                                text — a weak model then cannot invent field names or malform a call
+    //   OPENHARN_PROMPT_TOOLS=1      describe tools in the prompt & omit the `tools` field (no-native-tools servers)
+    //   OPENHARN_MAX_CALLS=<n>       per-turn circuit-breaker limit (default 1)
+    //   OPENHARN_TOTAL_MAX=<n>       total calls across all turns before tools are removed (default 5)
     let narrow = std::env::var_os("OPENHARN_NARROW").is_some();
     let allowed: Option<Vec<String>> = if narrow {
         Some(["read", "grep", "glob"].iter().map(|s| s.to_string()).collect())
@@ -109,6 +113,7 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     let schemas = active_schemas(&allowed);
 
     for _ in 0..cfg.max_turns {
+        let mut call_count = 0usize;
         // Keep the conversation within the model's context before every request.
         fit_context(history, budget);
         let mut wire = if prompt_tools {
@@ -127,7 +132,9 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             // final chunk carries usage (and llama-server adds `timings`) → tok/s
             "stream_options": { "include_usage": true },
         });
-        if prompt_tools {
+        if no_tools {
+            // no tools or grammar — model can only answer in text
+        } else if prompt_tools {
             // grammar-constrain the output to a schema-valid tool call (or plain text)
             if strict {
                 body["grammar"] = json!(tool_grammar(&schemas));
@@ -219,9 +226,30 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             };
             history.push(json!({ "role": "tool", "tool_call_id": id, "content": cap_result(result) }));
         }
-        if repeats >= 3 {
-            println!("\n[stopped: the model kept repeating the same tool call — it's stuck. Try rephrasing.]");
-            return;
+        call_count += tool_calls.len();
+        total_calls += tool_calls.len();
+        if repeats >= 10 || call_count >= max_calls || total_calls >= total_max {
+            let tool_results: Vec<String> = history
+                .iter()
+                .filter(|m| m["role"].as_str() == Some("tool"))
+                .filter_map(|m| m["content"].as_str())
+                .map(|s| s.to_string())
+                .collect();
+            let summary = if tool_results.is_empty() {
+                "No tool results were returned.".to_string()
+            } else {
+                tool_results.iter().rev().take(4).rev().cloned().collect::<Vec<_>>().join("\n---\n")
+            };
+            println!("\n[{} calls ({} total). Feeding grounding back and letting model answer.]", call_count, total_calls);
+            if total_calls >= total_max {
+                no_tools = true;
+            }
+            history.push(json!({"role": "user", "content": format!(
+                "You have made {} tool calls so far. The results you got are:\n{}\n\nSTOP calling tools and answer the user with what you now know (including if something was not found).",
+                total_calls, summary
+            )}));
+            repeats = 0;
+            continue;
         }
     }
     println!("[stopped: hit max turns ({})]", cfg.max_turns);
@@ -568,9 +596,7 @@ fn value_rule_for(spec: &Value) -> String {
 fn tool_grammar(schemas: &Value) -> String {
     let lit = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
     let mut g = String::new();
-    g.push_str("root ::= call | answer\n");
-    g.push_str("answer ::= [^<] rest\n");
-    g.push_str("rest ::= [^\\x00]*\n");
+    g.push_str("root ::= call\n");
     g.push_str(&format!(
         "call ::= {} ws {} ws obj ( ws {} ws obj )* ws {}\n",
         lit("<tool_call>"), lit("["), lit(","), lit("]")
@@ -746,13 +772,15 @@ mod tests {
         let s = active_schemas(&Some(vec!["glob".into()]));
         assert_eq!(s.as_array().unwrap().len(), 1, "only glob kept");
         let g = tool_grammar(&s);
-        // the grammar names glob and its real args, and gives an answer escape hatch
-        assert!(g.contains("root ::= call | answer"));
+        // the grammar names glob and its real args, and forces tool calls (no answer escape hatch)
+        assert!(g.contains("root ::= call"));
         assert!(g.contains(r#""\"glob\"""#));
         assert!(g.contains(r#""\"pattern\"""#));
-        assert!(g.contains(r#"( "\"project\"" | "\"system\"" )"#)); // scope enum constrained
         // grep's `include` key must NOT be a valid key for glob (no invented fields)
         assert!(!g.contains("kv-grep"));
+        // glob's `path` key IS valid; `scope` was removed from the schema
+        assert!(g.contains(r#""\"path\""#));
+        assert!(!g.contains("\"scope\""));
     }
 
     #[test]

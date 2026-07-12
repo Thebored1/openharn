@@ -20,14 +20,6 @@ fn skippable(entry: &walkdir::DirEntry) -> bool {
         && SKIP_DIRS.contains(&entry.file_name().to_string_lossy().as_ref())
 }
 
-/// True when the model asked for a whole-system search. A tiny model can't be
-/// trusted to produce a valid `C:\` path, so it flips this flag instead and WE
-/// resolve the real filesystem roots.
-fn is_system_scope(args: &Value) -> bool {
-    let s = args["scope"].as_str().unwrap_or("");
-    s.eq_ignore_ascii_case("system") || s.eq_ignore_ascii_case("global")
-}
-
 /// The actual filesystem roots to search: every existing drive on Windows, `/` on
 /// Unix. The model never has to name these.
 fn system_roots() -> Vec<PathBuf> {
@@ -41,21 +33,6 @@ fn system_roots() -> Vec<PathBuf> {
         vec![PathBuf::from("/")]
     }
 }
-
-/// The search roots for a call: the whole system when scope=system, else the one
-/// (project-relative) path.
-fn search_roots(cwd: &Path, args: &Value) -> Vec<PathBuf> {
-    if is_system_scope(args) {
-        system_roots()
-    } else {
-        vec![resolve(cwd, args["path"].as_str().unwrap_or("."))]
-    }
-}
-
-/// Told the model how to *actually* widen — via the flag it can produce, not a
-/// path it can't.
-const WIDEN_HINT: &str =
-    "To search the whole computer, call again with scope=\"system\" (do NOT pass a path for this).";
 
 /// Cap on entries walked in one search so a system scan terminates.
 const WALK_CAP: usize = 800_000;
@@ -72,6 +49,90 @@ fn resolve(cwd: &Path, p: &str) -> PathBuf {
         return cwd.to_path_buf();
     }
     cwd.join(trimmed)
+}
+
+/// Shared walk+glob logic used by both glob_tool and glob_system_tool.
+fn do_glob_search(roots: &[PathBuf], pat: &glob::Pattern, basename_ok: bool) -> (Vec<String>, bool) {
+    let mut out: Vec<String> = vec![];
+    let mut walked = 0usize;
+    let mut capped = false;
+    'outer: for root in roots {
+        for entry in WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|e| !skippable(e))
+            .filter_map(|e| e.ok())
+        {
+            walked += 1;
+            if walked > WALK_CAP {
+                capped = true;
+                break 'outer;
+            }
+            let path = entry.path();
+            let rel = path.strip_prefix(root).unwrap_or(path);
+            let hit = pat.matches_path(rel)
+                || (basename_ok
+                    && entry.file_name().to_str().map(|n| pat.matches(n)).unwrap_or(false));
+            if hit {
+                let suffix = if entry.file_type().is_dir() { "/" } else { "" };
+                out.push(format!("{}{}", path.display(), suffix));
+                if out.len() >= 100 {
+                    out.push("…[showing first 100 matches]".into());
+                    break 'outer;
+                }
+            }
+        }
+    }
+    out.sort();
+    (out, capped)
+}
+
+/// Shared walk+grep logic used by both grep and grep_system.
+fn do_grep_search(roots: &[PathBuf], re: &regex::Regex, include: Option<&glob::Pattern>) -> (Vec<String>, bool) {
+    let mut out: Vec<String> = vec![];
+    let mut files = 0usize;
+    'outer: for root in roots {
+      for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !skippable(e))
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Some(inc) = include {
+            if !entry.file_name().to_str().map(|n| inc.matches(n)).unwrap_or(false) {
+                continue;
+            }
+        }
+        files += 1;
+        if files > WALK_CAP {
+            out.push("…[search stopped: too many files]".into());
+            break 'outer;
+        }
+        if entry.metadata().map(|m| m.len() > 2_000_000).unwrap_or(true) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        for (i, line) in content.lines().enumerate() {
+            if re.is_match(line) {
+                let l = line.trim();
+                let l: String = if l.chars().count() > 200 {
+                    format!("{}…", l.chars().take(200).collect::<String>())
+                } else {
+                    l.to_string()
+                };
+                out.push(format!("{}:{}: {}", entry.path().display(), i + 1, l));
+                if out.len() >= 100 {
+                    out.push("…[showing first 100 matches]".into());
+                    break 'outer;
+                }
+            }
+        }
+      }
+    }
+    (out, files > WALK_CAP)
 }
 
 /// Per-session state: the project root and which files have been read (so edit /
@@ -94,13 +155,15 @@ impl Session {
             "edit" => self.edit_tool(args),
             "multiedit" => self.multiedit_tool(args),
             "glob" => self.glob_tool(args),
+            "glob_system" => self.glob_system_tool(args),
             "grep" => grep(&self.cwd, args),
+            "grep_system" => grep_system(&self.cwd, args),
             "bash" => bash(&self.cwd, args),
             "webfetch" => webfetch(args),
             "todowrite" => self.todowrite(args),
             "todoread" => self.todoread(),
             other => format!(
-                "'{other}' is not an available tool. The tools are: read, write, edit, multiedit, glob, grep, bash, webfetch, todowrite, todoread. To find a file by name use `glob`; to search file contents use `grep`."
+                "'{other}' is not an available tool. The tools are: read, write, edit, multiedit, glob, glob_system, grep, grep_system, bash, webfetch, todowrite, todoread. To find a file by name use `glob`; to search file contents use `grep`; for system-wide search use `glob_system` or `grep_system`."
             ),
         }
     }
@@ -248,6 +311,9 @@ impl Session {
     }
 
     fn glob_tool(&self, args: &Value) -> String {
+        if args.get("scope").is_some() {
+            return "Error: 'scope' is not a valid parameter for 'glob'. To search the entire system, use the 'glob_system' tool instead.".into();
+        }
         let Some(pattern) = args["pattern"].as_str() else {
             return "Error: glob requires 'pattern'.".into();
         };
@@ -255,63 +321,41 @@ impl Session {
             Ok(p) => p,
             Err(e) => return format!("Invalid glob pattern: {e}"),
         };
-        // A pattern with no path separator is matched against the basename too, so
-        // `Cargo.toml` or `*.rs` finds matches anywhere (forgiving for the model).
         let basename_ok = !pattern.contains('/') && !pattern.contains('\\');
-        let roots = search_roots(&self.cwd, args);
-        let system = is_system_scope(args);
-        // forced grounding: a project-scoped search at a path that doesn't exist gets a
-        // listing of what does, instead of a bare "no matches" it can loop on.
-        if !system {
-            if let Some(root) = roots.first() {
-                if !root.exists() {
-                    return ground_missing_path(root, &self.cwd);
-                }
-            }
+        let root = resolve(&self.cwd, args["path"].as_str().unwrap_or("."));
+        if !root.exists() {
+            return ground_missing_path(&root, &self.cwd);
         }
-        let mut out: Vec<String> = vec![];
-        let mut walked = 0usize;
-        let mut capped = false;
-        'outer: for root in &roots {
-            for entry in WalkDir::new(root)
-                .into_iter()
-                .filter_entry(|e| !skippable(e))
-                .filter_map(|e| e.ok())
-            {
-                walked += 1;
-                if walked > WALK_CAP {
-                    capped = true;
-                    break 'outer;
-                }
-                let path = entry.path();
-                let rel = path.strip_prefix(root).unwrap_or(path);
-                let hit = pat.matches_path(rel)
-                    || (basename_ok
-                        && entry.file_name().to_str().map(|n| pat.matches(n)).unwrap_or(false));
-                if hit {
-                    let suffix = if entry.file_type().is_dir() { "/" } else { "" };
-                    out.push(format!("{}{}", path.display(), suffix));
-                    if out.len() >= 100 {
-                        out.push("…[showing first 100 matches]".into());
-                        break 'outer;
-                    }
-                }
-            }
-        }
-        out.sort();
+        let (out, _capped) = do_glob_search(&[root.clone()], &pat, basename_ok);
         if !out.is_empty() {
             return out.join("\n");
         }
-        if system {
-            let where_ = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
-            let note = if capped { " (search hit its limit before finishing)" } else { "" };
-            format!("No files matching '{pattern}' anywhere on the system — searched {where_}{note}.")
-        } else {
-            format!(
-                "No files matching '{pattern}' under {} (the project directory — the ONLY place searched). {WIDEN_HINT}",
-                roots.first().map(|r| r.display().to_string()).unwrap_or_default()
-            )
+        format!(
+            "No files matching '{pattern}' under {} (the project directory — the ONLY place searched). To search the ENTIRE computer, use the 'glob_system' tool instead.",
+            root.display()
+        )
+    }
+
+    fn glob_system_tool(&self, args: &Value) -> String {
+        if args.get("scope").is_some() {
+            return "Error: 'scope' is not a valid parameter for 'glob_system'. It always searches the entire system.".into();
         }
+        let Some(pattern) = args["pattern"].as_str() else {
+            return "Error: glob_system requires 'pattern'.".into();
+        };
+        let pat = match glob::Pattern::new(pattern) {
+            Ok(p) => p,
+            Err(e) => return format!("Invalid glob pattern: {e}"),
+        };
+        let basename_ok = !pattern.contains('/') && !pattern.contains('\\');
+        let roots = system_roots();
+        let (out, capped) = do_glob_search(&roots, &pat, basename_ok);
+        if !out.is_empty() {
+            return out.join("\n");
+        }
+        let where_ = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
+        let note = if capped { " (search hit its limit before finishing)" } else { "" };
+        format!("No files matching '{pattern}' anywhere on the system — searched {where_}{note}.")
     }
 }
 
@@ -370,6 +414,9 @@ fn ground_missing(path: &Path, cwd: &Path, err: &str) -> String {
 }
 
 fn grep(cwd: &Path, args: &Value) -> String {
+    if args.get("scope").is_some() {
+        return "Error: 'scope' is not a valid parameter for 'grep'. To search the entire system, use the 'grep_system' tool instead.".into();
+    }
     let Some(pat) = args["pattern"].as_str() else {
         return "Error: grep requires 'pattern'.".into();
     };
@@ -380,71 +427,42 @@ fn grep(cwd: &Path, args: &Value) -> String {
     let include = args["include"]
         .as_str()
         .and_then(|p| glob::Pattern::new(p).ok());
-    let roots = search_roots(cwd, args);
-    let system = is_system_scope(args);
-    if !system {
-        if let Some(root) = roots.first() {
-            if !root.exists() {
-                return ground_missing_path(root, cwd);
-            }
-        }
+    let root = resolve(cwd, args["path"].as_str().unwrap_or("."));
+    if !root.exists() {
+        return ground_missing_path(&root, cwd);
     }
-    let mut out: Vec<String> = vec![];
-    let mut files = 0usize;
-    'outer: for root in &roots {
-      for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| !skippable(e))
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if let Some(inc) = &include {
-            if !entry.file_name().to_str().map(|n| inc.matches(n)).unwrap_or(false) {
-                continue;
-            }
-        }
-        files += 1;
-        if files > WALK_CAP {
-            out.push("…[search stopped: too many files]".into());
-            break 'outer;
-        }
-        if entry.metadata().map(|m| m.len() > 2_000_000).unwrap_or(true) {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(entry.path()) else {
-            continue;
-        };
-        for (i, line) in content.lines().enumerate() {
-            if re.is_match(line) {
-                let l = line.trim();
-                let l: String = if l.chars().count() > 200 {
-                    format!("{}…", l.chars().take(200).collect::<String>())
-                } else {
-                    l.to_string()
-                };
-                out.push(format!("{}:{}: {}", entry.path().display(), i + 1, l));
-                if out.len() >= 100 {
-                    out.push("…[showing first 100 matches]".into());
-                    break 'outer;
-                }
-            }
-        }
-      }
-    }
+    let (out, _capped) = do_grep_search(&[root.clone()], &re, include.as_ref());
     if !out.is_empty() {
         return out.join("\n");
     }
-    if system {
-        let where_ = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
-        format!("No matches for /{pat}/ anywhere on the system — searched {where_}.")
-    } else {
-        format!(
-            "No matches for /{pat}/ under {} (the project directory — the ONLY place searched). {WIDEN_HINT}",
-            roots.first().map(|r| r.display().to_string()).unwrap_or_default()
-        )
+    format!(
+        "No matches for /{pat}/ under {} (the project directory — the ONLY place searched). To search the ENTIRE computer, use the 'grep_system' tool instead.",
+        root.display()
+    )
+}
+
+fn grep_system(_cwd: &Path, args: &Value) -> String {
+    if args.get("scope").is_some() {
+        return "Error: 'scope' is not a valid parameter for 'grep_system'. It always searches the entire system.".into();
     }
+    let Some(pat) = args["pattern"].as_str() else {
+        return "Error: grep_system requires 'pattern'.".into();
+    };
+    let re = match regex::Regex::new(pat) {
+        Ok(r) => r,
+        Err(e) => return format!("Invalid regex: {e}"),
+    };
+    let include = args["include"]
+        .as_str()
+        .and_then(|p| glob::Pattern::new(p).ok());
+    let roots = system_roots();
+    let (out, capped) = do_grep_search(&roots, &re, include.as_ref());
+    if !out.is_empty() {
+        return out.join("\n");
+    }
+    let where_ = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
+    let note = if capped { " (search hit its limit before finishing)" } else { "" };
+    format!("No matches for /{pat}/ anywhere on the system — searched {where_}{note}.")
 }
 
 fn bash(cwd: &Path, args: &Value) -> String {
@@ -585,21 +603,34 @@ pub fn schemas() -> Value {
         }},
         {"type":"function","function":{
             "name":"glob",
-            "description":"Fast file pattern matching. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by name. By default it searches ONLY the project directory. To search the WHOLE computer/system, set scope=\"system\" — do NOT try to pass a filesystem path for that; the tool finds every drive itself.",
+            "description":"Fast file pattern matching in the PROJECT directory. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by name inside the project. To search the ENTIRE computer, use the 'glob_system' tool instead.",
             "parameters":{"type":"object","properties":{
                 "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or Cargo.toml."},
-                "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root. Ignored when scope is \"system\"."},
-                "scope":{"type":"string","enum":["project","system"],"description":"\"project\" (default) searches the project dir; \"system\" searches the entire computer (all drives). Use \"system\" when the user asks to search everywhere."}
+                "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root."}
+            },"required":["pattern"]}
+        }},
+        {"type":"function","function":{
+            "name":"glob_system",
+            "description":"Search the ENTIRE computer for files matching a glob pattern. Use this when you need to find files ANYWHERE on the system, not just inside the project directory.",
+            "parameters":{"type":"object","properties":{
+                "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or *.txt."}
             },"required":["pattern"]}
         }},
         {"type":"function","function":{
             "name":"grep",
-            "description":"Fast content search using regular expressions. Returns matching `file:line: text`. Supports full regex. Filter files with `include` (e.g. \"*.rs\", \"*.{ts,tsx}\"). By default searches the project directory. Set scope=\"system\" to search the whole computer (all drives) — do NOT pass a path for that.",
+            "description":"Search file CONTENTS by regex in the PROJECT directory. Returns matching `file:line: text`. Supports full regex. Filter files with `include` (e.g. \"*.rs\", \"*.{ts,tsx}\"). To search the ENTIRE computer, use the 'grep_system' tool instead.",
             "parameters":{"type":"object","properties":{
                 "pattern":{"type":"string","description":"Regular expression to search for in file contents."},
                 "include":{"type":"string","description":"Only search files whose name matches this glob (optional)."},
-                "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Ignored when scope is \"system\"."},
-                "scope":{"type":"string","enum":["project","system"],"description":"\"project\" (default) or \"system\" (the entire computer)."}
+                "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root."}
+            },"required":["pattern"]}
+        }},
+        {"type":"function","function":{
+            "name":"grep_system",
+            "description":"Search the CONTENTS of ALL files on the ENTIRE computer by regex. Use this when you need to search outside the project directory. Supports full regex; filter with `include`.",
+            "parameters":{"type":"object","properties":{
+                "pattern":{"type":"string","description":"Regular expression to search for in file contents."},
+                "include":{"type":"string","description":"Only search files whose name matches this glob (optional)."}
             },"required":["pattern"]}
         }},
         {"type":"function","function":{
@@ -656,6 +687,7 @@ mod tests {
         d
     }
 
+    #[cfg(windows)]
     #[test]
     fn rooted_driveless_stays_in_project() {
         let cwd = Path::new("C:\\proj");
@@ -698,26 +730,21 @@ mod tests {
         let mut s = Session::new(d.clone());
         let out = s.execute("glob", &json!({"pattern": "index.html"}));
         assert!(out.contains("project directory"), "must name the scope: {out}");
-        assert!(out.contains("scope=\"system\""), "must offer the system flag: {out}");
+        assert!(out.contains("glob_system"), "must offer the system tool: {out}");
         std::fs::remove_dir_all(&d).ok();
     }
 
-    // scope="system" must resolve to real FILESYSTEM roots, never the project dir
-    // — this is the structural fix (the model flips a flag; we supply the roots).
+    // system_roots must resolve to real FILESYSTEM roots, never the project dir.
     #[test]
-    fn system_scope_resolves_to_drive_roots_not_project() {
-        let proj = PathBuf::from("C:\\some_project");
-        let roots = search_roots(&proj, &json!({"scope": "system"}));
-        assert!(!roots.contains(&proj), "system scope must not be the project: {roots:?}");
+    fn system_roots_resolves_to_drive_roots() {
+        let roots = system_roots();
+        assert!(!roots.is_empty(), "at least one root: {roots:?}");
         assert!(roots.iter().any(|r| r.exists()), "at least one real root: {roots:?}");
         #[cfg(windows)]
         assert!(
             roots.iter().any(|r| r.to_string_lossy().contains(":\\")),
             "windows roots should be drive roots: {roots:?}"
         );
-        // and project scope still resolves to the project
-        let proj_roots = search_roots(&proj, &json!({}));
-        assert_eq!(proj_roots, vec![proj]);
     }
 
     #[test]

@@ -34,6 +34,8 @@ No rebuild needed. Set these before launching openharn.
 | `OPENHARN_NARROW` | preset: `read,grep,glob` **+ strict + prompt-tools** | most reliable narrow agent for a weak model |
 | `OPENHARN_STRICT_TOOLS` | grammar-force every reply to a schema-valid call or plain text | your model malforms calls |
 | `OPENHARN_PROMPT_TOOLS` | describe tools in the prompt, omit the `tools` field | server has no tool API (bitnet.cpp, old forks) |
+| `OPENHARN_MAX_CALLS` | per-turn tool-call limit before grounding fires (default 1) | model spirals, wastes budget |
+| `OPENHARN_TOTAL_MAX` | total calls across all turns before tools are removed (default 5) | model never stops calling tools |
 | `OPENHARN_NO_THINK` | suppress a reasoning model's thinking (faster on CPU) | LFM2.5 is too slow |
 | `OPENHARN_SHOW_THINKING` | stream the raw chain-of-thought instead of the meter | debugging what the model thought |
 
@@ -87,7 +89,8 @@ is picked up everywhere.
 
 **Stricter / looser** — in `src/agent.rs`: the grammar is `tool_grammar()` (constrains tool
 name, argument keys, value types); the prompt-tools description is `tool_prompt()`; the
-circuit breaker is the `repeats >= 3` check; context budget is `HISTORY_BUDGET`; result caps
+circuit breaker limits per-turn calls (`max_calls`, default 1) and total calls (`total_max`,
+default 5) before injecting a grounding message; context budget is `HISTORY_BUDGET`; result caps
 are `TOOL_RESULT_CAP`.
 
 **Grounding messages** — in `src/tools.rs`: `ground_missing()` (bad `read`) and
