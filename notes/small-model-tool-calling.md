@@ -6,6 +6,20 @@ detailed look at one model that can't, and a same-prompt benchmark of the rest. 
 finding: tool-calling tracks the model *family and post-training*, not the quantization
 tier.
 
+---
+
+## Related work
+
+This benchmark operationalizes the **SLM paper's** (Belcak et al., arXiv:2506.02153v2) three value statements: V1 (SLMs are sufficiently powerful), V2 (operationally superior), V3 (economically necessary). Our findings confirm V1 for tool-tuned models (LFM2-1.2B-Tool, LFM2.5, Granite-4.0), V2 for CPU-first deployment, and V3 via the reasoning-tax measurements ([`reasoning-tax.md`](reasoning-tax.md)). The discriminator being *post-training* not *quantization* aligns with the paper's emphasis on "scaling laws assume fixed architectures; new SLM structures change the game."
+
+---
+
+## Related work
+
+This note validates the core thesis of **"Small Language Models are the Future of Agentic AI"** (Belcak et al., NVIDIA, arXiv:2506.02153v2): SLMs (<10B) are sufficiently powerful for agentic tasks when paired with a well-designed harness. The V1–V3 claims (sufficient capability, operational suitability, economic necessity) map directly to what we observe: tool-tuned 1.2B models pass behavioral suites, while larger untuned MoEs fail.
+
+The **slm-agents** paper (Lin et al., arXiv:2604.25850) demonstrates the same interaction: a 1.5B specialist + co-designed harness matches a 72B generalist. Our `OPENHARN_STRICT_TOOLS` + `YESNO` combo is a prompt-only approximation of their "custom harness + distilled specialist" co-design.
+
 ## Setup
 
 openharn (Rust) driving `llama-server` (llama.cpp build 9585) with

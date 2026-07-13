@@ -5,6 +5,12 @@ target — per-turn latency is set mostly by how many *thinking* tokens a reason
 emits, not its generation rate or file size. Notes on the measurements and the
 reasoning-off knob.
 
+---
+
+## Related work
+
+The **SLM paper** (Belcak et al., arXiv:2506.02153v2) identifies reasoning overhead as a key operational cost: "SLMs are necessarily more economical for the vast majority of LM uses in agentic systems." Our measurements confirm: on CPU, thinking tokens *are* the wall-clock. The **NLT** paper (Johnson et al., arXiv:2510.14453) also finds that structured output constraints (grammar) reduce variance and token waste — our `NO_THINK` prefill (`OPENHARN_NO_THINK=1`) is a reasoning-specific application of that principle.
+
 ## Where the time goes
 
 A typical turn with a reasoning model, split by phase:
