@@ -160,16 +160,3 @@ The edit engine (`src/edit.rs`) is a Rust port of [opencode](https://github.com/
 replacer, and the system prompt is adapted from opencode's default prompt — both used
 under opencode's MIT license. Full attribution is in [`NOTICE`](NOTICE) and
 [`LICENSES/opencode-MIT.txt`](LICENSES/opencode-MIT.txt).
-
-## References
-
-The design and notes in this repository draw on the following academic works:
-
-- **Belcak et al. (2025)** — *Small Language Models are the Future of Agentic AI* (arXiv:2506.02153v2). The V1/V2/V3 framework and "harness matters more than model" thesis.
-- **Lin et al. (2026)** — *Specialized Small-Model Subagents: Co-designing Fine-tuned SLMs and Task-Specific Harnesses* (arXiv:2604.25850). The SLM harness design: externalized state, constrained actions, pre/post verification, per-step retry.
-- **Yao et al. (2022)** — *ReAct: Synergizing Reasoning and Acting in Language Models* (arXiv:2210.03629). The default ReAct loop pattern.
-- **Schick et al. (2023)** — *Toolformer: Language Models Can Teach Themselves to Use Tools* (arXiv:2302.04761). Native tool-calling via self-supervised training.
-- **Wang et al. (2024)** — *Executable Code Actions Elicit Better LLM Agents* (arXiv:2402.01030). CodeAct: Python code as unified action space.
-- **Johnson et al. (2025)** — *Natural Language Tools: A Natural Language Approach to Tool Calling* (arXiv:2510.14453). NLT: YES/NO tool selection, natural language format, grammar constraints.
-- **Hsieh et al. (2023)** — *Tool Documentation Enables Zero-Shot Tool-Usage* (arXiv:2308.00675). Zero-shot tool use via documentation-only prompts.
-- **Parisi et al. (2022)** — *TALM: Tool Augmented Language Models* (arXiv:2205.12255). Self-play bootstrapping for tool use from few demos.

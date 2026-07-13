@@ -21,12 +21,21 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
 
+    let friendly_results = std::env::var_os("OPENHARN_FRIENDLY_RESULTS").is_some();
+
+    let max_tokens: u32 = std::env::var("OPENHARN_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096);
+
     let cfg = agent::Config {
         base_url,
         model,
         api_key,
         max_turns: 25,
+        max_tokens,
         temperature: 0.2,
+        friendly_results,
     };
 
     println!(

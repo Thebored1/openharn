@@ -34,9 +34,6 @@ fn system_roots() -> Vec<PathBuf> {
     }
 }
 
-/// Cap on entries walked in one search so a system scan terminates.
-const WALK_CAP: usize = 800_000;
-
 /// Resolve a path against the project root, guarding the Windows `"/."` trap where
 /// PathBuf::join with a rooted-but-driveless path escapes to the drive root.
 fn resolve(cwd: &Path, p: &str) -> PathBuf {
@@ -54,19 +51,12 @@ fn resolve(cwd: &Path, p: &str) -> PathBuf {
 /// Shared walk+glob logic used by both glob_tool and glob_system_tool.
 fn do_glob_search(roots: &[PathBuf], pat: &glob::Pattern, basename_ok: bool) -> (Vec<String>, bool) {
     let mut out: Vec<String> = vec![];
-    let mut walked = 0usize;
-    let mut capped = false;
     'outer: for root in roots {
         for entry in WalkDir::new(root)
             .into_iter()
             .filter_entry(|e| !skippable(e))
             .filter_map(|e| e.ok())
         {
-            walked += 1;
-            if walked > WALK_CAP {
-                capped = true;
-                break 'outer;
-            }
             let path = entry.path();
             let rel = path.strip_prefix(root).unwrap_or(path);
             let hit = pat.matches_path(rel)
@@ -83,13 +73,12 @@ fn do_glob_search(roots: &[PathBuf], pat: &glob::Pattern, basename_ok: bool) -> 
         }
     }
     out.sort();
-    (out, capped)
+    (out, false)
 }
 
 /// Shared walk+grep logic used by both grep and grep_system.
 fn do_grep_search(roots: &[PathBuf], re: &regex::Regex, include: Option<&glob::Pattern>) -> (Vec<String>, bool) {
     let mut out: Vec<String> = vec![];
-    let mut files = 0usize;
     'outer: for root in roots {
       for entry in WalkDir::new(root)
         .into_iter()
@@ -104,11 +93,7 @@ fn do_grep_search(roots: &[PathBuf], re: &regex::Regex, include: Option<&glob::P
                 continue;
             }
         }
-        files += 1;
-        if files > WALK_CAP {
-            out.push("…[search stopped: too many files]".into());
-            break 'outer;
-        }
+        // no cap on files searched
         if entry.metadata().map(|m| m.len() > 2_000_000).unwrap_or(true) {
             continue;
         }
@@ -132,7 +117,7 @@ fn do_grep_search(roots: &[PathBuf], re: &regex::Regex, include: Option<&glob::P
         }
       }
     }
-    (out, files > WALK_CAP)
+    (out, false)
 }
 
 /// Per-session state: the project root and which files have been read (so edit /

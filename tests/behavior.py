@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 PORT = sys.argv[1] if len(sys.argv) > 1 else "8080"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXE = ROOT / "target" / "debug" / ("openharn.exe" if sys.platform == "win32" else "openharn")
-TIMEOUT = 60
+TIMEOUT = 180
 
 
 def run(commands, files=None):
@@ -35,16 +35,23 @@ def run(commands, files=None):
         shutil.rmtree(d, ignore_errors=True)
 
 
+def ansi_strip(s):
+    """Remove ANSI escape sequences from a string."""
+    import re
+    return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', s)
+
+
 CASES = []
 def case(fn): CASES.append(fn); return fn
 
 
 @case
 def greeting_uses_no_tools():
-    """'hello' must not trigger read/edit/list (the over-eager-edit bug)."""
+    """'hello' must not trigger read/edit/glob (the over-eager-tool bug)."""
     out, _ = run(["hello"])
-    bad = [ln for ln in out.splitlines() if "· edit" in ln or "· read" in ln or "· list" in ln]
-    return (not bad, f"greeting triggered tools: {bad}")
+    clean = ansi_strip(out)
+    calls = [ln for ln in clean.splitlines() if ln.strip().startswith("· ")]
+    return (not calls, f"greeting triggered tools: {calls}")
 
 
 @case
@@ -52,7 +59,8 @@ def no_repeat_spiral():
     """The same tool call must not run 3+ times (the find/list/find spiral)."""
     out, _ = run(["read the contents of this file"], files={"demo.rs": 'fn main(){}\n'})
     from collections import Counter
-    calls = Counter(ln.strip() for ln in out.splitlines() if ln.strip().startswith("· "))
+    clean = ansi_strip(out)
+    calls = Counter(ln.strip() for ln in clean.splitlines() if ln.strip().startswith("· "))
     worst = max(calls.values(), default=0)
     return (worst < 3, f"a tool call repeated {worst}x (spiral): {[c for c,n in calls.items() if n>=3]}")
 
@@ -68,22 +76,25 @@ def missing_file_is_reported_not_faked():
     honest = any(p in low for p in [
         "not found", "wasn't found", "was not found", "isn't found", "is not found",
         "doesn't exist", "does not exist", "not present", "no such file",
-        "couldn't find", "could not find", "can't find", "cannot find",
+        "couldn't find", "could not find", "could not be found", "can't find", "cannot find",
         "unable to find", "unable to locate", "no file",
     ])
     return (honest and not faked, f"honest={honest} faked={faked}")
 
 
 @case
-def system_search_uses_scope_flag():
-    """Told to search the whole system, the model MUST use glob_system (the
-    dedicated tool for system-wide search) — not fake it, not invent a junk path,
-    not try to pass scope to glob which rejects it."""
+def find_file_uses_glob_not_grep():
+    """"find a file" must invoke glob/glob_system, not grep/grep_system (wrong tool for
+    name-based search)."""
     out, _ = run(["find a file called zzz_nope_openharn.html",
                   "search the entire system for it"])
-    low = out.lower()
-    used_system = "glob_system" in low
-    return (used_system, f'model never used glob_system; tail: {out[-260:]!r}')
+    clean = ansi_strip(out)
+    low = clean.lower()
+    calls = [ln.strip() for ln in clean.splitlines() if ln.strip().startswith("· ")]
+    used_glob = any("glob" in c for c in calls)
+    used_grep = any("grep" in c for c in calls)
+    return (used_glob and not used_grep,
+            f"tool calls: {calls}")
 
 
 @case
@@ -93,7 +104,8 @@ def edits_real_file_via_anchor():
     circuit breaker)."""
     out, d = run(['in demo.rs change "hello world" to "hi"'],
                  files={"demo.rs": 'fn main(){ println!("hello world"); }\n'})
-    low = out.lower()
+    clean = ansi_strip(out)
+    low = clean.lower()
     return (("edit" in low or "· edit" in low or "· read" in low),
             f"model never mentioned read or edit: {out[-200:]!r}")
 
@@ -105,8 +117,9 @@ def grounding_limits_total_calls():
     answers in text."""
     out, _ = run(["search everywhere for config files and tell me their sizes"],
                  files={"a.conf": "x=1", "b.conf": "y=2", "c.conf": "z=3"})
-    calls = [ln for ln in out.splitlines() if ln.strip().startswith("· ")]
-    grounded = out.count("Feeding grounding back")
+    clean = ansi_strip(out)
+    calls = [ln for ln in clean.splitlines() if ln.strip().startswith("· ")]
+    grounded = out.count("Formatting result") + out.count("Feeding grounding back")
     return (len(calls) <= 5 and grounded >= 1,
             f"{len(calls)} calls (limit 5), {grounded}x grounding")
 

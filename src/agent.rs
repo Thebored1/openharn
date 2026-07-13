@@ -9,6 +9,7 @@
 
 use crate::tools;
 use crate::slm_harness;
+use regex::Regex;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, BufReader, Write};
 
@@ -19,7 +20,9 @@ pub struct Config {
     pub model: String,
     pub api_key: Option<String>,
     pub max_turns: usize,
+    pub max_tokens: u32,
     pub temperature: f64,
+    pub friendly_results: bool,
 }
 
 const SYSTEM: &str = include_str!("prompt.txt");
@@ -55,6 +58,84 @@ fn fit_context(history: &mut Vec<Value>, max_chars: usize) {
         }
         history.drain(1..end);
     }
+}
+
+/// Classify user input as needing a tool (TOOL) or plain chat (CHAT).
+/// Non-streaming, fast call. Shows result to the user.
+fn run_intent_detection(
+    cfg: &Config,
+    client: &reqwest::blocking::Client,
+    url: &str,
+    user: &str,
+) -> &'static str {
+    let prompt = format!(
+        "Classify the user's request. Reply with exactly one word: TOOL or CHAT.\n\
+         CHAT = greeting, small talk, question about the system, request for explanation.\n\
+         TOOL = needs to read/write/find/edit files, search code, run commands, fetch URLs.\n\n\
+         Examples:\n\
+         User: hello\nClassification: CHAT\n\
+         User: what is 2+2?\nClassification: CHAT\n\
+         User: explain how to use grep\nClassification: CHAT\n\
+         User: what files are in src/\nClassification: TOOL\n\
+         User: read the file main.rs\nClassification: TOOL\n\
+         User: search for TODO in code\nClassification: TOOL\n\
+         User: run cargo build\nClassification: TOOL\n\
+         User: what does foo.txt contain?\nClassification: TOOL\n\
+         User: what's in foo.txt?\nClassification: TOOL\n\
+         User: does foo.txt exist?\nClassification: TOOL\n\
+         User: what is the content of foo.txt\nClassification: TOOL\n\n\
+         User: {user}\n\n\
+         Classification:"
+    );
+    let request = json!({
+        "model": cfg.model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "max_tokens": 10,
+        "stream": false,
+    });
+    let mut req = client.post(url).json(&request);
+    if let Some(k) = &cfg.api_key {
+        req = req.bearer_auth(k);
+    }
+    let text = req.send()
+        .ok()
+        .and_then(|r| r.json::<Value>().ok())
+        .and_then(|v| v["choices"][0]["message"]["content"].as_str().map(|s| s.to_uppercase()))
+        .unwrap_or_default();
+    let is_tool = text.contains("TOOL");
+    println!("[intent] {}", if is_tool { "TOOL — will call tools" } else { "CHAT — answering directly" });
+    if is_tool { "TOOL" } else { "CHAT" }
+}
+
+/// Format tool result as a natural-language response. Takes the user's original
+/// request + tool result, streams a friendly answer, and adds it to history.
+fn run_friendly_response(
+    cfg: &Config,
+    client: &reqwest::blocking::Client,
+    url: &str,
+    user: &str,
+    result: &str,
+    history: &mut Vec<Value>,
+) {
+    let messages = vec![
+        json!({"role": "system", "content": "You are a helpful coding assistant. Given the user's request and the tool result, answer naturally in plain text. CRITICAL: If the tool result contains an error message (like file not found), you MUST tell the user the file could not be found. NEVER guess or fabricate file contents."}),
+        json!({"role": "user", "content": format!("User request: {user}\n\nTool result: {result}\n\nAnswer the user's question naturally.")}),
+    ];
+    let body = json!({
+        "model": cfg.model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+        "max_tokens": 1024,
+        "stream": true,
+        "stream_options": { "include_usage": true },
+    });
+    let resp = match client.post(url).json(&body).send() {
+        Ok(r) => r,
+        Err(e) => { println!("[friendly] request failed: {e}"); return; }
+    };
+    let (content, _tool_calls) = stream_response(resp, false, false);
+    history.push(json!({"role": "assistant", "content": content}));
 }
 
 /// Run one user request to completion, mutating `history` (the live conversation)
@@ -141,6 +222,54 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         }
     }
 
+    // FRIENDLY_RESULTS: classify user intent before the tool loop
+    let friendly_mode = cfg.friendly_results && prompt_tools;
+    let intent = if friendly_mode {
+        run_intent_detection(cfg, &client, &url, user)
+    } else {
+        "TOOL"
+    };
+
+    // CHAT intent: skip tools entirely, just answer directly
+    if intent == "CHAT" {
+        fit_context(history, budget);
+        // For chat, strip tool schemas from the system prompt — don't mention tools
+        let mut wire: Vec<Value> = history.iter().enumerate().map(|(i, m)| {
+            if i == 0 && m["role"] == "system" {
+                json!({"role": "system", "content": "You are a helpful assistant. Answer the user's question directly and concisely."})
+            } else {
+                m.clone()
+            }
+        }).collect();
+        if no_think {
+            wire.push(json!({ "role": "assistant", "content": "<think></think>" }));
+        }
+        let body = json!({
+            "model": cfg.model,
+            "messages": wire,
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "stream": true,
+            "stream_options": { "include_usage": true },
+        });
+        let resp = match client.post(&url).json(&body).send() {
+            Ok(r) => r,
+            Err(e) => {
+                println!("[error] chat request failed: {e}");
+                return;
+            }
+        };
+        if !resp.status().is_success() {
+            println!("[error] HTTP {}", resp.status());
+            return;
+        }
+        let (content, _) = stream_response(resp, no_think, false);
+        history.push(json!({"role": "assistant", "content": content}));
+        return;
+    }
+
+    let mut retried_text = false;
+
     for _ in 0..cfg.max_turns {
         let mut call_count = 0usize;
         // Keep the conversation within the model's context before every request.
@@ -206,7 +335,7 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
             return;
         }
 
-        let (mut content, mut tool_calls) = stream_response(resp, no_think);
+        let (mut content, mut tool_calls) = stream_response(resp, no_think, false);
 
         // Fallback tool-call parse: some models (e.g. Granite 3.x) emit a valid
         // structured call as TEXT — `<tool_call>[{"name":…,"arguments":{…}}]` — that the
@@ -242,6 +371,9 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         history.push(assistant);
 
         if tool_calls.is_empty() {
+
+            println!("\n[intent] {intent} — model responded with text");
+            println!("{}", content);
             return; // text was already streamed live
         }
 
@@ -269,6 +401,25 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         }
         call_count += tool_calls.len();
         total_calls += tool_calls.len();
+        
+        // Friendly results mode: after tool execution, format a natural response and stop
+        if friendly_mode {
+            let tool_results: Vec<String> = history
+                .iter()
+                .filter(|m| m["role"].as_str() == Some("tool"))
+                .filter_map(|m| m["content"].as_str())
+                .map(|s| s.to_string())
+                .collect();
+            let summary = if tool_results.is_empty() {
+                "No results were found.".to_string()
+            } else {
+                tool_results.iter().rev().take(4).rev().cloned().collect::<Vec<_>>().join("\n---\n")
+            };
+            println!("\n[{} call(s). Formatting result…]", call_count);
+            run_friendly_response(cfg, &client, &url, user, &summary, history);
+            return;
+        }
+        
         if repeats >= 3 {
             println!("\n[stopped: the model kept repeating the same tool call — it's stuck. Try rephrasing.]");
             return;
@@ -305,6 +456,23 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
             continue;
         }
         if call_count >= max_calls || total_calls >= total_max {
+            if friendly_mode {
+                // Friendly results: format the tool result as a natural response
+                let tool_results: Vec<String> = history
+                    .iter()
+                    .filter(|m| m["role"].as_str() == Some("tool"))
+                    .filter_map(|m| m["content"].as_str())
+                    .map(|s| s.to_string())
+                    .collect();
+                let summary = if tool_results.is_empty() {
+                    "No results were found.".to_string()
+                } else {
+                    tool_results.iter().rev().take(4).rev().cloned().collect::<Vec<_>>().join("\n---\n")
+                };
+                println!("\n[{} call(s). Formatting result…]", call_count);
+                run_friendly_response(cfg, &client, &url, user, &summary, history);
+                return;
+            }
             let tool_results: Vec<String> = history
                 .iter()
                 .filter(|m| m["role"].as_str() == Some("tool"))
@@ -334,7 +502,11 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
 /// the (possibly chunked) tool-call deltas, and return the full text + assembled
 /// tool calls. Prints a tok/s stats line from llama-server's timings (or usage +
 /// wall time as a fallback).
-fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String, Vec<Value>) {
+fn stream_response(
+    resp: reqwest::blocking::Response,
+    no_think: bool,
+    suppress_output: bool,
+) -> (String, Vec<Value>) {
     let mut content = String::new();
     let mut tool_calls: Vec<Value> = vec![];
     let mut printed = false;
@@ -384,10 +556,14 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                 think_tokens += 1;
                 if show_thinking {
                     if !thinking {
+                        if !suppress_output {
                         print!("\x1b[2m");
+                        }
                         thinking = true;
                     }
+                    if !suppress_output {
                     print!("{r}");
+                    }
                     io::stdout().flush().ok();
                     printed = true;
                 } else if last_meter.elapsed().as_millis() >= 120 {
@@ -413,19 +589,25 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                     // once the reasoning closes (2nd </think>) start streaming the answer live.
                     if answer_started {
                         reply_tokens += 1;
+                        if !suppress_output {
                         print!("{t}");
+                        }
                         io::stdout().flush().ok();
                         printed = true;
                     } else if content.matches("</think>").count() >= 2 {
                         answer_started = true;
                         if live {
+                            if !suppress_output {
                             print!("\r\x1b[K");
+                            }
                             live = false;
                         }
                         reply_start.get_or_insert_with(std::time::Instant::now);
                         let ans = strip_think(&content); // answer produced so far
                         if !ans.is_empty() {
+                            if !suppress_output {
                             print!("{ans}");
+                            }
                             io::stdout().flush().ok();
                             printed = true;
                         }
@@ -445,11 +627,15 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                     }
                 } else {
                     if live {
+                        if !suppress_output {
                         print!("\r\x1b[K"); // erase the live thinking line before the answer
+                        }
                         live = false;
                     }
                     if thinking {
+                        if !suppress_output {
                         print!("\x1b[0m\n\n"); // close dim thinking before the answer
+                        }
                         thinking = false;
                     }
                     reply_start.get_or_insert_with(std::time::Instant::now);
@@ -459,7 +645,9 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                     match hide_call {
                         Some(true) => {} // a tool call in text form — keep it off-screen
                         Some(false) => {
+                            if !suppress_output {
                             print!("{t}");
+                            }
                             io::stdout().flush().ok();
                             printed = true;
                         }
@@ -469,7 +657,9 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                                 hide_call = Some(true);
                             } else if !"<|tool_call|>".starts_with(tr) && !"<tool_call>".starts_with(tr) {
                                 hide_call = Some(false);
+                                if !suppress_output {
                                 print!("{content}"); // flush the buffered head, then stream
+                                }
                                 io::stdout().flush().ok();
                                 printed = true;
                             }
@@ -506,10 +696,14 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
     // drop empty accumulator slots the model never filled
     tool_calls.retain(|t| !t["function"]["name"].as_str().unwrap_or("").is_empty());
     if live {
+        if !suppress_output {
         print!("\r\x1b[K"); // erase the live thinking/working line
+        }
     }
     if thinking {
+        if !suppress_output {
         print!("\x1b[0m"); // never leave the terminal dimmed
+        }
     }
     if no_think {
         let clean = strip_think(&content);
@@ -518,7 +712,9 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
                 println!(); // answer already streamed live; close the line
             }
         } else if !clean.is_empty() {
+            if !suppress_output {
             println!("{clean}"); // reasoning never resolved to a streamed answer — print it
+            }
         }
         content = clean; // store only the clean answer in history
     } else if printed {
@@ -557,9 +753,13 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
     }
     if !parts.is_empty() {
         for p in &parts {
+            if !suppress_output {
             println!("\x1b[2m  {p}\x1b[0m");
+            }
         }
+        if !suppress_output {
         println!("\x1b[2m  total {:.1}s\x1b[0m", (end - started).as_secs_f64());
+        }
     }
     (content, tool_calls)
 }
@@ -571,41 +771,89 @@ fn stream_response(resp: reqwest::blocking::Response, no_think: bool) -> (String
 /// isn't a recognizable tool call, so a normal answer is never misread as one.
 fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
     let mut s = content.trim();
-    for marker in ["<|tool_call|>", "<tool_call>"] {
+    for marker in ["<|tool_call|>", "```"] {
         if let Some(rest) = s.strip_prefix(marker) {
             s = rest;
             break;
         }
     }
     let s = s.trim();
-    // isolate a JSON array `[…]` or a single object `{…}` (models emit both shapes)
-    let open = s.find(['[', '{'])?;
-    let is_arr = s.as_bytes()[open] == b'[';
-    let close = if is_arr { s.rfind(']')? } else { s.rfind('}')? };
-    if close < open {
-        return None;
-    }
-    let val: Value = serde_json::from_str(&s[open..=close]).ok()?;
-    let items: Vec<Value> = match val {
-        Value::Array(a) => a,
-        obj => vec![obj],
-    };
     let mut calls = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        // tolerate an optional {"function": {…}} wrapper, and name/arguments vs
-        // name/parameters (Granite echoes the schema key `parameters`).
-        let f = item.get("function").unwrap_or(item);
-        let name = f.get("name").and_then(|v| v.as_str())?;
-        let args = f.get("arguments").or_else(|| f.get("parameters"));
-        let args_str = match args {
-            Some(a) if a.is_string() => a.as_str().unwrap_or("{}").to_string(),
-            Some(a) if !a.is_null() => a.to_string(),
-            _ => "{}".to_string(),
+    // Try JSON tool-call format first (Granite/llama-server style)
+    if let Some(open) = s.find(['[', '{']) {
+        let is_arr = s.as_bytes()[open] == b'[';
+        let close = if is_arr { s.rfind(']') } else { s.rfind('}') };
+        if let Some(close) = close {
+            if close > open {
+                if let Ok(val) = serde_json::from_str::<Value>(&s[open..=close]) {
+                    let items: Vec<Value> = match val {
+                        Value::Array(a) => a,
+                        obj => vec![obj],
+                    };
+                    for (i, item) in items.iter().enumerate() {
+                        let f = item.get("function").unwrap_or(item);
+                        if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
+                            let args = f.get("arguments").or_else(|| f.get("parameters"));
+                            let args_str = match args {
+                                Some(a) if a.is_string() => a.as_str().unwrap_or("{}").to_string(),
+                                Some(a) if !a.is_null() => a.to_string(),
+                                _ => "{}".to_string(),
+                            };
+                            calls.push(json!({
+                                "id": format!("call_{i}"),
+                                "type": "function",
+                                "function": { "name": name, "arguments": args_str }
+                            }));
+                        }
+                    }
+                    if !calls.is_empty() {
+                        return Some(calls);
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: parse function-call syntax like `read({"path": "foo.txt"})` or `read(foo.txt)`
+    // Also handles backticks: `read({"path": "foo.txt"})`
+    // Maps positional args to each tool's first required parameter.
+    fn tool_param(name: &str) -> Option<&'static str> {
+        Some(match name {
+            "read" => "path",
+            "edit" => "path",
+            "write" => "path",
+            "multiedit" => "path",
+            "glob" => "pattern",
+            "glob_system" => "pattern",
+            "grep" => "pattern",
+            "grep_system" => "pattern",
+            "bash" => "command",
+            "webfetch" => "url",
+            "todowrite" => "todos",
+            "python" => "code",
+            _ => return None,
+        })
+    }
+    // Only match at line start or after backtick — avoids matching code like `std::fs::write(...)`
+    let pattern = Regex::new(r"(?m)(?:^|\s)`?(\w+)\((\{.*?\}|[^)]*)\)`?").ok()?;
+    for cap in pattern.captures_iter(s) {
+        let name = cap.get(1).map(|m| m.as_str())?;
+        let args_str = cap.get(2).map(|m| m.as_str()).unwrap_or("{}").trim();
+        // Skip if args look like code (not a simple tool argument)
+        if !args_str.starts_with('{') && args_str.contains('"') {
+            continue;
+        }
+        let args = if args_str.starts_with('{') {
+            args_str.to_string()
+        } else if let Some(param) = tool_param(name) {
+            // Map positional arg to the tool's first required parameter
+            json!({param: args_str}).to_string()
+        } else {
+            continue;
         };
         calls.push(json!({
-            "id": format!("call_{i}"),
+            "id": format!("call_{}", calls.len()),
             "type": "function",
-            "function": { "name": name, "arguments": args_str }
+            "function": { "name": name, "arguments": args }
         }));
     }
     if calls.is_empty() { None } else { Some(calls) }
@@ -1010,6 +1258,33 @@ mod tests {
         assert_eq!(calls[0]["function"]["name"], "glob");
         let args: Value = serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
         assert_eq!(args["pattern"], "src/**/*.rs");
+    }
+
+    #[test]
+    fn parses_function_call_syntax() {
+        // Backtick-wrapped function call
+        let calls = parse_text_tool_calls(r#"`grep_system(poems.md)`"#).expect("should parse");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "grep_system");
+        let args: Value = serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(args["pattern"], "poems.md");
+
+        // Bare function call without backticks
+        let calls = parse_text_tool_calls("read(src/main.rs)").expect("should parse");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "read");
+        let args: Value = serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(args["path"], "src/main.rs");
+
+        // Multiple args in bash
+        let calls = parse_text_tool_calls("bash(ls -la)").expect("should parse");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "bash");
+        let args: Value = serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(args["command"], "ls -la");
+
+        // Unknown tool returns None
+        assert!(parse_text_tool_calls("foobar(x)").is_none());
     }
 
     #[test]
