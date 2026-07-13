@@ -38,8 +38,7 @@ the task stalls.
 
 ## 2. SLM harness (`OPENHARN_SLM=1`)
 
-Direct port of the five harness requirements from the slm-agents paper (arXiv:2604.25850,
-Lin et al.). The model **never sees conversation history**. It receives one compact JSON
+Direct port of the five harness requirements from the **slm-agents** paper (Ranjan & Talluri, 2026; GitHub: IshaanAyaan/slm-agents). The model **never sees conversation history**. It receives one compact JSON
 observation per turn and must emit exactly one JSON action.
 
 ### Observation schema

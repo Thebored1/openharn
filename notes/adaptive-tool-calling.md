@@ -15,7 +15,7 @@ fix.
 
 ## Related work
 
-This three-layer taxonomy maps to the **NLT** paper (Johnson et al., arXiv:2510.14453) which identifies *task interference* and *format constraints* as dual bottlenecks: Layer 1 = model doesn't emit the format (NLT's solution: natural language YES/NO); Layer 2 = runtime drops valid format (our fix: `parse_text_tool_calls`); Layer 3 = server lacks tool API (our fix: `PROMPT_TOOLS=1`). The **slm-agents** paper (Lin et al., arXiv:2604.25850) makes the same distinction in its custom harness: the harness owns **form** (schema validation, state, retry) while the model owns **judgment** (which tool, what args). Our Layer 2/3 fixes are harness-side form guarantees; Layer 1 is where judgment lives.
+This three-layer taxonomy maps to the **NLT** paper (Johnson et al., arXiv:2510.14453) which identifies *task interference* and *format constraints* as dual bottlenecks: Layer 1 = model doesn't emit the format (NLT's solution: natural language YES/NO); Layer 2 = runtime drops valid format (our fix: `parse_text_tool_calls`); Layer 3 = server lacks tool API (our fix: `PROMPT_TOOLS=1`). The **slm-agents** paper (Ranjan & Talluri, 2026; GitHub: IshaanAyaan/slm-agents) makes the same distinction in its custom harness: the harness owns **form** (schema validation, state, retry) while the model owns **judgment** (which tool, what args). Our Layer 2/3 fixes are harness-side form guarantees; Layer 1 is where judgment lives.
 
 ## Three places it breaks
 
