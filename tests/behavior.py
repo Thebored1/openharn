@@ -135,18 +135,28 @@ def run_case(fn):
 def main():
     if not EXE.exists():
         print(f"build first: cargo build  (missing {EXE})"); sys.exit(2)
+    # Optional case filter for tuning scripts: OPENHARN_TUNE_CASES="a,b,c"
+    # restricts which behavioral cases run (unset = all). Backward-compatible.
+    filt = os.environ.get("OPENHARN_TUNE_CASES", "").strip()
+    chosen = [fn for fn in CASES]
+    if filt:
+        want = {n.strip() for n in filt.split(",") if n.strip()}
+        chosen = [fn for fn in CASES if fn.__name__ in want]
+        if not chosen:
+            print(f"[tune] no cases matched {want}; running all {len(CASES)}")
+            chosen = list(CASES)
     results = {}
     with ThreadPoolExecutor(max_workers=1) as pool:
-        futures = {pool.submit(run_case, fn): fn.__name__ for fn in CASES}
+        futures = {pool.submit(run_case, fn): fn.__name__ for fn in chosen}
         for fut in as_completed(futures):
             name, ok, detail = fut.result()
             results[name] = (ok, detail)
     passed = 0
-    for fn in CASES:
+    for fn in chosen:
         ok, detail = results[fn.__name__]
         print(f"[{'PASS' if ok else 'FAIL'}] {fn.__name__} — {detail if not ok else 'ok'}")
         passed += ok
-    print(f"\n{passed}/{len(CASES)} passed")
+    print(f"\n{passed}/{len(chosen)} passed")
     sys.exit(0 if passed == len(CASES) else 1)
 
 
