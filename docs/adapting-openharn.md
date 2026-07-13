@@ -38,10 +38,16 @@ No rebuild needed. Set these before launching openharn.
 | `OPENHARN_TOTAL_MAX` | total calls across all turns before tools are removed (default 5) | model never stops calling tools |
 | `OPENHARN_NO_THINK` | suppress a reasoning model's thinking (faster on CPU) | LFM2.5 is too slow |
 | `OPENHARN_SHOW_THINKING` | stream the raw chain-of-thought instead of the meter | debugging what the model thought |
+| `OPENHARN_FRIENDLY_RESULTS` | arm intent detection: classify the user turn as `CHAT` or `TOOL` *before* the tool loop; a `CHAT` turn skips tools and answers directly | model fires tools on greetings / small talk ("hello" → `todowrite`) |
 
 `NARROW` implies `STRICT_TOOLS`; `STRICT_TOOLS` implies `PROMPT_TOOLS` (a grammar can't
 combine with the native `tools` field). `NO_THINK` is ignored under strict (its prefill
-breaks the grammar, and weak models don't reason anyway).
+breaks the grammar, and weak models don't reason anyway). `FRIENDLY_RESULTS`
+**requires** `PROMPT_TOOLS` — intent detection only arms when both are set
+(`agent.rs`: `friendly_mode = cfg.friendly_results && prompt_tools`). Enabling it
+switches the whole run to text-tool mode, so it fixes greetings at the cost of tool
+reliability on models that prefer native calls (e.g. MiniCPM-V drops 6/6 → 4/6).
+For a capable model, prefer the system-prompt greeting rule + thinking ON over this flag.
 
 ## Recipes
 
@@ -75,6 +81,19 @@ Most reliable agent a weak model can drive:
 ```sh
 OPENHARN_NARROW=1 cargo run -- .          # read,grep,glob, grammar-locked, grounded
 ```
+
+**Model fires tools on a greeting / small talk** ("hello" → `todowrite`):
+two paths — pick by model:
+- *Capable model (native tools work):* add a system-prompt rule ("don't call
+  tools for casual conversation; reply in plain text") + keep **thinking ON**.
+  MiniCPM-V-4.6 reaches 6/6 this way. (The `hello` → `todowrite`
+  behavior is the over-eager-tool bug the `greeting_uses_no_tools` test guards.)
+- *Deterministic guard:* `OPENHARN_FRIENDLY_RESULTS=1` classifies the
+  turn as `CHAT` and skips tools — but it needs `PROMPT_TOOLS` too and
+  switches to text-tool mode, which weakens tool tasks on some models.
+  ```sh
+  OPENHARN_FRIENDLY_RESULTS=1 OPENHARN_PROMPT_TOOLS=1 cargo run -- .
+  ```
 
 Custom tool set:
 ```sh
