@@ -977,6 +977,28 @@ mod tests {
     }
 
     #[test]
+    fn prompt_tools_respects_filtered_schemas() {
+        // Regression: flatten_for_prompt_tools must use the filtered schemas,
+        // not the full tool set. Only "read" and "glob" are advertised.
+        let hist = vec![
+            json!({"role":"system","content":"SYS"}),
+            json!({"role":"user","content":"find files"}),
+        ];
+        let filtered = active_schemas(&Some(vec!["read".into(), "glob".into()]));
+        let wire = flatten_for_prompt_tools(&hist, &filtered);
+        let sys = wire[0]["content"].as_str().unwrap();
+        // read and glob must be present
+        assert!(sys.contains("read"), "read missing from filtered prompt");
+        assert!(sys.contains("glob"), "glob missing from filtered prompt");
+        // tools NOT in the filtered set must NOT appear
+        assert!(!sys.contains("grep"), "grep leaked into filtered prompt");
+        assert!(!sys.contains("bash"), "bash leaked into filtered prompt");
+        assert!(!sys.contains("edit"), "edit leaked into filtered prompt");
+        assert!(!sys.contains("write"), "write leaked into filtered prompt");
+        assert!(!sys.contains("glob_system"), "glob_system leaked into filtered prompt");
+    }
+
+    #[test]
     fn parses_object_echo_with_parameters() {
         // Granite's other shape: a single object with a `function` wrapper and
         // schema-style `parameters` (filled with real values) instead of `arguments`.
