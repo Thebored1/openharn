@@ -211,7 +211,7 @@ only lists the tools the model selected.
 | MiniCPM-V-4.6 | ~4B | 6/6 | any | 6/6 |
 | LFM2-8B-A1B | 8B (1B active) | 3/6 | PROMPT_TOOLS+STRICT | 6/6 |
 | LFM2-1.2B-Tool | 1.2B | 4/6 | **YESNO+STRICT** | **6/6** |
-| Qwen 3.5 0.8B | 0.8B | 2/6 | PROMPT_TOOLS+STRICT | 3/6 |
+| Qwen 3.5 0.8B | 0.8B | **6/6** | default | **6/6** |
 
 ### Key finding
 

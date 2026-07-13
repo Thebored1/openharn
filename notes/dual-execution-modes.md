@@ -172,7 +172,7 @@ OPENHARN_NO_THINK=1 \
 | Mode | Model | greeting | no_repeat | missing_file | glob_system | edit_anchor | grounding |
 |---|---|---|---|---|---|---|---|
 | Default | MiniCPM-V-4.6 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Default | Qwen 3.5 0.8B | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| **Default** | **Qwen 3.5 0.8B** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Default | LFM2 8B-A1B | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Default | LFM2-1.2B-Tool | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | **PROMPT_TOOLS+STRICT** | **LFM2 8B-A1B** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
