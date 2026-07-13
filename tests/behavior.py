@@ -9,10 +9,12 @@ Usage:
   python tests/behavior.py 8080
 """
 import os, subprocess, sys, tempfile, shutil, pathlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 PORT = sys.argv[1] if len(sys.argv) > 1 else "8080"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXE = ROOT / "target" / "debug" / ("openharn.exe" if sys.platform == "win32" else "openharn")
+TIMEOUT = 60
 
 
 def run(commands, files=None):
@@ -27,7 +29,7 @@ def run(commands, files=None):
         stdin = "".join(c + "\n" for c in commands) + "/exit\n"
         p = subprocess.run([str(EXE), d], input=stdin, capture_output=True,
                            text=True, encoding="utf-8", errors="replace",
-                           timeout=180, env=env)
+                           timeout=TIMEOUT, env=env)
         return (p.stdout or "") + (p.stderr or ""), d
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -49,7 +51,6 @@ def greeting_uses_no_tools():
 def no_repeat_spiral():
     """The same tool call must not run 3+ times (the find/list/find spiral)."""
     out, _ = run(["read the contents of this file"], files={"demo.rs": 'fn main(){}\n'})
-    # count identical tool-call lines
     from collections import Counter
     calls = Counter(ln.strip() for ln in out.splitlines() if ln.strip().startswith("· "))
     worst = max(calls.values(), default=0)
@@ -110,15 +111,26 @@ def grounding_limits_total_calls():
             f"{len(calls)} calls (limit 5), {grounded}x grounding")
 
 
+def run_case(fn):
+    try:
+        ok, detail = fn()
+    except Exception as e:
+        ok, detail = False, f"exception: {e}"
+    return fn.__name__, ok, detail
+
+
 def main():
     if not EXE.exists():
         print(f"build first: cargo build  (missing {EXE})"); sys.exit(2)
+    results = {}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        futures = {pool.submit(run_case, fn): fn.__name__ for fn in CASES}
+        for fut in as_completed(futures):
+            name, ok, detail = fut.result()
+            results[name] = (ok, detail)
     passed = 0
     for fn in CASES:
-        try:
-            ok, detail = fn()
-        except Exception as e:
-            ok, detail = False, f"exception: {e}"
+        ok, detail = results[fn.__name__]
         print(f"[{'PASS' if ok else 'FAIL'}] {fn.__name__} — {detail if not ok else 'ok'}")
         passed += ok
     print(f"\n{passed}/{len(CASES)} passed")

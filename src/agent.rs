@@ -752,8 +752,14 @@ fn value_rule_for(spec: &Value) -> String {
 /// weak model physically cannot invent a field name, misname a tool, or malform a call.
 fn tool_grammar(schemas: &Value) -> String {
     let lit = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    // GBNF rule names must be dashed-lowercase (e.g. "check-mate"). Tool names
+    // like glob_system contain underscores; replace them with dashes so the
+    // grammar parser accepts the rule names.
+    let rn = |s: &str| s.replace('_', "-");
     let mut g = String::new();
-    g.push_str("root ::= call\n");
+    // root: either a tool call or plain text (text = anything not starting with <)
+    g.push_str("root ::= call | text\n");
+    g.push_str("text ::= [^<] | [^<] text\n");
     g.push_str(&format!(
         "call ::= {} ws {} ws obj ( ws {} ws obj )* ws {}\n",
         lit("<tool_call>"), lit("["), lit(","), lit("]")
@@ -766,7 +772,8 @@ fn tool_grammar(schemas: &Value) -> String {
                 Some(n) => n,
                 None => continue,
             };
-            obj_alts.push(format!("t-{name}"));
+            let rname = rn(name);
+            obj_alts.push(format!("t-{rname}"));
             let props = t["function"]["parameters"]["properties"].as_object();
             let mut kvs: Vec<String> = Vec::new();
             if let Some(props) = props {
@@ -775,18 +782,18 @@ fn tool_grammar(schemas: &Value) -> String {
                 }
             }
             if kvs.is_empty() {
-                rules.push_str(&format!("a-{name} ::= {} ws {}\n", lit("{"), lit("}")));
+                rules.push_str(&format!("a-{rname} ::= {} ws {}\n", lit("{"), lit("}")));
             } else {
-                rules.push_str(&format!("kv-{name} ::= {}\n", kvs.join(" | ")));
+                rules.push_str(&format!("kv-{rname} ::= {}\n", kvs.join(" | ")));
                 rules.push_str(&format!(
-                    "a-{name} ::= {} ws ( kv-{name} ( ws {} ws kv-{name} )* )? ws {}\n",
+                    "a-{rname} ::= {} ws ( kv-{rname} ( ws {} ws kv-{rname} )* )? ws {}\n",
                     lit("{"), lit(","), lit("}")
                 ));
             }
             let name_lit = lit(&format!("\"{name}\""));
             let closing = lit("}");
             rules.push_str(&format!(
-                "t-{name} ::= {open} ws {qname} ws {colon} ws {name_lit} ws {comma} ws {qargs} ws {colon} ws a-{name} ws {closing}\n",
+                "t-{rname} ::= {open} ws {qname} ws {colon} ws {name_lit} ws {comma} ws {qargs} ws {colon} ws a-{rname} ws {closing}\n",
                 open = lit("{"),
                 qname = lit("\"name\""),
                 colon = lit(":"),
@@ -937,8 +944,8 @@ mod tests {
         let s = active_schemas(&Some(vec!["glob".into()]));
         assert_eq!(s.as_array().unwrap().len(), 1, "only glob kept");
         let g = tool_grammar(&s);
-        // the grammar names glob and its real args, and forces tool calls (no answer escape hatch)
-        assert!(g.contains("root ::= call"));
+        // the grammar names glob and its real args, and has a text escape hatch
+        assert!(g.contains("root ::= call | text"));
         assert!(g.contains(r#""\"glob\"""#));
         assert!(g.contains(r#""\"pattern\"""#));
         // grep's `include` key must NOT be a valid key for glob (no invented fields)
