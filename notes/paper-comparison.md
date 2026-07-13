@@ -64,7 +64,7 @@ Direct port of the **five harness requirements** from **slm-agents** (Lin et al.
 
 | Paper | Core Idea | openharn Implementation |
 |-------|-----------|--------------------------|
-| **NLT** (Johnson et al., 2025) | Replace JSON with YES/NO per tool in natural language; parser executes. | `PROMPT_TOOLS=1`: tools described in system prompt text (no native `tools` API). `STRICT_TOOLS=1`: GBNF grammar (`tool_grammar()`) forces every reply to valid `<tool_call>[{"name":...,"arguments":{...}}]` or plain text. Grammar generated automatically from `schemas()`. |
+| **NLT** (Johnson et al., 2025) | Replace JSON with YES/NO per tool in natural language; parser executes. | `PROMPT_TOOLS=1`: tools described in system prompt text (no native `tools` API). `STRICT_TOOLS=1`: GBNF grammar (`tool_grammar()`) forces every reply to valid `` `` ` `` or plain text. Grammar generated automatically from `schemas()`. |
 | **ReAct** | Native tool calls via `tools`/`tool_choice` API. | Native API used by default; grammar-constrained text is a **variant** for models that ignore native API. |
 
 **Why it works for LFM2-8B**:
@@ -84,9 +84,19 @@ Direct port of the **five harness requirements** from **slm-agents** (Lin et al.
 
 ---
 
-### 4. YES/NO Two-Pass Tool Selection (`OPENHARN_YESNO=1`)
+### Quick Decision Guide: Which Mode?
 
-| Paper | Core Idea | openharn Implementation |
+| Problem | Reach For | Why |
+|---------|-----------|-----|
+| Server rejects `tools` field / no native tool API (bitnet.cpp, old forks) | `OPENHARN_PROMPT_TOOLS=1` | Moves tool descriptions into prompt text; omits `tools` field entirely. |
+| Model emits valid call but server drops it (Granite `<tool_call>[...]` vs `<|tool_call|>`) | **Automatic** | `parse_text_tool_calls()` recovers text-format calls when native parse returns nothing. |
+| Model ignores native `tools` API / won't emit structured calls (LFM2-v2) | `OPENHARN_STRICT_TOOLS=1` (+ `PROMPT_TOOLS=1`) | GBNF grammar forces valid `<tool_call>[...]` output; model complies when constrained. |
+| Small model hallucinates with full tool set (LFM2-1.2B) | `OPENHARN_YESNO=1` (+ `STRICT_TOOLS=1`) | Two-pass YES/NO prunes tool list per turn → less confusion → no hallucination. |
+| Need max reliability for read-only nav on weak model | `OPENHARN_NARROW=1` | Preset: `read,grep,glob` + strict + prompt-tools; minimal surface, grammar-locked. |
+
+---
+
+### 4. YES/NO Two-Pass Tool Selection (`OPENHARN_YESNO=1`)
 |-------|-----------|--------------------------|
 | **NLT** | Two-pass: Pass 1 — model selects tools (YES/NO); Pass 2 — model fills args for selected tools only. | Implemented in `agent.rs` lines 213–223. `run_yesno_pass1()` runs each turn; selected tools filtered into `effective_schemas`; grammar + prompt text only advertise selected tools. |
 
@@ -166,7 +176,7 @@ Direct port of the **five harness requirements** from **slm-agents** (Lin et al.
 No paper tests this matrix; they typically evaluate one config per model family.
 
 ### 4. Text Call Recovery (Granite `<tool_call>[...]`)
-**Finding**: Granite 3.1 emits valid `<tool_call>[{"arguments":..., "name":...}]` but llama.cpp's template expects `<|tool_call|>`.tool_call|>`, so server drops call to `content` with `tool_calls: null`. openharn's `parse_text_tool_calls()` recovers it via regex.
+**Finding**: Granite 3.1 emits valid `<tool_call>[{"arguments":..., "name":...}]` but llama.cpp's template expects ``<|tool_call|>``, so server drops call to `content` with `tool_calls: null`. openharn's `parse_text_tool_calls()` recovers it via regex.
 
 **Papers assume native API works**; this harness/runtime mismatch is a real deployment gap.
 
