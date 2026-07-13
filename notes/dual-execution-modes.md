@@ -152,6 +152,10 @@ is syntactically valid.
 OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 \
   ./target/debug/openharn /workspace
 
+# YES/NO + STRICT — best for small models that hallucinate (1.2B–3B)
+OPENHARN_YESNO=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 \
+  ./target/debug/openharn /workspace
+
 # SLM mode — best for <3B models or models without native tool calling
 OPENHARN_SLM=1 \
 OPENHARN_SLM_MAX_STEPS=10 \
@@ -170,12 +174,19 @@ OPENHARN_NO_THINK=1 \
 | Default | MiniCPM-V-4.6 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Default | Qwen 3.5 0.8B | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Default | LFM2 8B-A1B | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Default | LFM2-1.2B-Tool | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
 | **PROMPT_TOOLS+STRICT** | **LFM2 8B-A1B** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **PROMPT_TOOLS+STRICT** | **LFM2-1.2B-Tool** | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **YESNO+STRICT** | **LFM2-1.2B-Tool** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **SLM** | MiniCPM-V-4.6 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **SLM** | LFM2-1.2B-Tool | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 The grammar-constrained text mode is the only configuration where LFM2-8B passes all
 six tests. The GBNF grammar was previously broken (see `gbnf-grammar-fix.md`); with the
 fix, the grammar forces valid tool calls that the model wouldn't emit otherwise.
+
+For LFM2-1.2B-Tool, adding YES/NO two-pass selection narrows the tool list per turn,
+reducing hallucination on complex queries (6/6 vs 5/6 with PROMPT_TOOLS+STRICT alone).
 
 ---
 
