@@ -109,6 +109,10 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     if slm_mode {
         return crate::slm_harness::run_slm(cfg, history, session, user);
     }
+    // OPENHARN_YESNO=1 enables NLT-style two-pass tool selection:
+    // Pass 1: model sees each tool as YES/NO → selects subset
+    // Pass 2: only selected tools are advertised; model fills args
+    let yesno_mode = std::env::var_os("OPENHARN_YESNO").is_some();
     let narrow = std::env::var_os("OPENHARN_NARROW").is_some();
     let allowed: Option<Vec<String>> = if narrow {
         Some(["read", "grep", "glob"].iter().map(|s| s.to_string()).collect())
@@ -117,12 +121,27 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
             s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
         })
     };
-    let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
+let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
     let prompt_tools = strict || std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
-    // no_think prefills a `<think></think>` assistant turn — which is itself grammar-invalid,
+    // no_think prefills a `</think>` assistant turn — which is itself grammar-invalid,
     // so it can't combine with strict's grammar (and weak models don't reason anyway).
     let no_think = std::env::var_os("OPENHARN_NO_THINK").is_some() && !strict;
     let schemas = active_schemas(&allowed);
+
+    // YES/NO two-pass tool selection (NLT 2025): if enabled, run Pass 1 each turn
+    let mut yesno_selected: Option<Vec<String>> = None;
+    let mut effective_schemas = active_schemas(&allowed);
+    if yesno_mode {
+        // Re-run Pass 1 each turn since relevant tools may change
+        let selected = run_yesno_pass1(cfg, &effective_schemas, &client, &url, &cfg.api_key, user);
+        if selected.is_empty() {
+            println!("[yesno] no tools selected — continuing without tools");
+        } else {
+            yesno_selected = Some(selected.clone());
+            println!("[yesno] selected: {:?}", selected);
+            effective_schemas = active_schemas(&Some(selected));
+        }
+    }
 
     for _ in 0..cfg.max_turns {
         let mut call_count = 0usize;
@@ -149,10 +168,10 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
         } else if prompt_tools {
             // grammar-constrain the output to a schema-valid tool call (or plain text)
             if strict {
-                body["grammar"] = json!(tool_grammar(&schemas));
+                body["grammar"] = json!(tool_grammar(&effective_schemas));
             }
         } else {
-            body["tools"] = schemas.clone();
+            body["tools"] = effective_schemas.clone();
             body["tool_choice"] = json!("auto");
         }
         // Send with one retry — a transient connection blip (server briefly busy,
@@ -592,6 +611,86 @@ fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
         }));
     }
     if calls.is_empty() { None } else { Some(calls) }
+}
+
+/// YES/NO two-pass tool selection (NLT 2025).
+/// Pass 1: present each tool as a YES/NO question, model responds with JSON.
+/// Returns list of selected tool names.
+fn run_yesno_pass1(
+    cfg: &Config,
+    schemas: &Value,
+    client: &reqwest::blocking::Client,
+    url: &str,
+    api_key: &Option<String>,
+    user_task: &str,
+) -> Vec<String> {
+    let Some(arr) = schemas.as_array() else { return Vec::new() };
+    let mut questions = String::new();
+    for (i, tool) in arr.iter().enumerate() {
+        let name = tool["function"]["name"].as_str().unwrap_or("");
+        let desc = tool["function"]["description"].as_str().unwrap_or("");
+        questions.push_str(&format!("{}. {} — {}\n", i + 1, name, desc));
+    }
+    let prompt = format!(
+        "User task: {}\n\nSelect tools needed. Reply with valid JSON only:\n{{
+  \"selections\": {{
+    \"read\": \"YES\"|\"NO\",
+    \"write\": \"YES\"|\"NO\",
+    \"edit\": \"YES\"|\"NO\",
+    \"glob\": \"YES\"|\"NO\",
+    \"grep\": \"YES\"|\"NO\",
+    \"glob_system\": \"YES\"|\"NO\",
+    \"grep_system\": \"YES\"|\"NO\",
+    \"bash\": \"YES\"|\"NO\",
+    \"python\": \"YES\"|\"NO\",
+    \"webfetch\": \"YES\"|\"NO\",
+    \"todowrite\": \"YES\"|\"NO\",
+    \"todoread\": \"YES\"|\"NO\"
+  }}
+}}",
+        user_task
+    );
+
+    let request = json!({
+        "model": cfg.model,
+        "messages": [
+            {"role": "system", "content": "You are a tool selector. Reply with valid JSON only."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.0,
+        "stream": false,
+    });
+
+    let mut req = client.post(url).json(&request);
+    if let Some(k) = api_key {
+        req = req.bearer_auth(k);
+    }
+
+    let resp = match req.send() {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    let resp_json: Value = match resp.json() {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let text = resp_json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("");
+
+    let mut selected = Vec::new();
+    if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+        if let Some(sel) = parsed["selections"].as_object() {
+            for (tool, choice) in sel {
+                if choice.as_str() == Some("YES") {
+                    selected.push(tool.clone());
+                }
+            }
+        }
+    }
+    selected
 }
 
 /// The tool schemas advertised for this run, optionally filtered to an allowed subset

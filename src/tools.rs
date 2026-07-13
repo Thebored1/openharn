@@ -162,6 +162,7 @@ impl Session {
             "webfetch" => webfetch(args),
             "todowrite" => self.todowrite(args),
             "todoread" => self.todoread(),
+            "python" => python(&self.cwd, args),
             other => format!(
                 "'{other}' is not an available tool. The tools are: read, write, edit, multiedit, glob, glob_system, grep, grep_system, bash, webfetch, todowrite, todoread. To find a file by name use `glob`; to search file contents use `grep`; for system-wide search use `glob_system` or `grep_system`."
             ),
@@ -495,6 +496,44 @@ fn bash(cwd: &Path, args: &Value) -> String {
     }
 }
 
+fn python(cwd: &Path, args: &Value) -> String {
+    let Some(code) = args["code"].as_str() else {
+        return "Error: python requires 'code'.".into();
+    };
+    let output = if cfg!(windows) {
+        std::process::Command::new("python")
+            .arg("-c")
+            .arg(code)
+            .current_dir(cwd)
+            .output()
+    } else {
+        std::process::Command::new("python3")
+            .arg("-c")
+            .arg(code)
+            .current_dir(cwd)
+            .output()
+    };
+    match output {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+            let err = String::from_utf8_lossy(&o.stderr);
+            if !err.trim().is_empty() {
+                s.push_str("\n[stderr]\n");
+                s.push_str(&err);
+            }
+            if s.trim().is_empty() {
+                s = format!("(no output, exit {})", o.status.code().unwrap_or(-1));
+            }
+            if s.len() > 8000 {
+                s.truncate(8000);
+                s.push_str("\n…[truncated]");
+            }
+            s
+        }
+        Err(e) => format!("Error running python: {e}"),
+    }
+}
+
 fn render_todos(todos: &[Value]) -> String {
     todos
         .iter()
@@ -667,6 +706,12 @@ pub fn schemas() -> Value {
         {"type":"function","function":{
             "name":"todoread","description":"Read the current todo list.",
             "parameters":{"type":"object","properties":{}}
+        }},
+        {"type":"function","function":{
+            "name":"python","description":"Run Python code in a sandboxed subprocess. Returns stdout/stderr. Use for computation, data processing, or any task expressible as code. Variables persist across calls within the same session. IMPORTANT: Use print() to output results — the last expression is NOT automatically returned.",
+            "parameters":{"type":"object","properties":{
+                "code":{"type":"string","description":"Python code to execute."}
+            },"required":["code"]}
         }}
     ])
 }
