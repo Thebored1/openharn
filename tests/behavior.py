@@ -12,7 +12,7 @@ import os, subprocess, sys, tempfile, shutil, pathlib
 
 PORT = sys.argv[1] if len(sys.argv) > 1 else "8080"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-EXE = ROOT / "target" / "debug" / "openharn.exe"
+EXE = ROOT / "target" / "debug" / ("openharn.exe" if sys.platform == "win32" else "openharn")
 
 
 def run(commands, files=None):

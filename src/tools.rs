@@ -671,6 +671,46 @@ pub fn schemas() -> Value {
     ])
 }
 
+/// Async wrapper for grep tool (for SLM harness)
+pub async fn grep_tool(pattern: &str, file_glob: Option<&str>, path: Option<&str>, limit: usize) -> ToolResult {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let args = json!({
+        "pattern": pattern,
+        "file_glob": file_glob.unwrap_or("**/*"),
+        "path": path.unwrap_or("."),
+        "limit": limit,
+    });
+    let out = tokio::task::spawn_blocking(move || grep(&cwd, &args)).await.unwrap_or_else(|e| format!("grep task failed: {e}"));
+    let is_error = out.starts_with("Error:");
+    let error = if is_error { Some(out.clone()) } else { None };
+    ToolResult { output: out, is_error, error }
+}
+
+/// Async wrapper for read tool (for SLM harness)
+pub async fn read_tool(path: &str, offset: Option<usize>, limit: Option<usize>) -> ToolResult {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let args = json!({
+        "path": path,
+        "offset": offset.unwrap_or(1),
+        "limit": limit.unwrap_or(2000),
+    });
+    let out = tokio::task::spawn_blocking(move || {
+        let mut session = Session::new(cwd);
+        session.read_tool(&args)
+    }).await.unwrap_or_else(|e| format!("read task failed: {e}"));
+    let is_error = out.starts_with("Error:") || out.starts_with("Error ");
+    let error = if is_error { Some(out.clone()) } else { None };
+    ToolResult { output: out, is_error, error }
+}
+
+/// Result type for async tool calls
+#[derive(Debug, Clone)]
+pub struct ToolResult {
+    pub output: String,
+    pub is_error: bool,
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

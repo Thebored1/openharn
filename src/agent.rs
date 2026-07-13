@@ -8,6 +8,7 @@
 //! control (streaming, tool parsing, context, stop conditions).
 
 use crate::tools;
+use crate::slm_harness;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, BufReader, Write};
 
@@ -97,6 +98,17 @@ pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session,
     //   OPENHARN_PROMPT_TOOLS=1      describe tools in the prompt & omit the `tools` field (no-native-tools servers)
     //   OPENHARN_MAX_CALLS=<n>       per-turn circuit-breaker limit (default 1)
     //   OPENHARN_TOTAL_MAX=<n>       total calls across all turns before tools are removed (default 5)
+// OPENHARN_SLM=1 enables the compact structured-observation harness (slm-agents style):
+    // - Minimal JSON observation per turn (goal, valid_actions, searches, files, reads, last_result, feedback)
+    // - Constrained action space (valid_actions only, ANSWER requires prior READ)
+    // - Externalized state (all durable state in SlmState, not in conversation history)
+    // - Per-step verification (pre-execution + post-execution)
+    // - Retry localization (failed step re-prompted with feedback; task never restarts)
+    let slm_mode = std::env::var_os("OPENHARN_SLM").is_some();
+
+    if slm_mode {
+        return crate::slm_harness::run_slm(cfg, history, session, user);
+    }
     let narrow = std::env::var_os("OPENHARN_NARROW").is_some();
     let allowed: Option<Vec<String>> = if narrow {
         Some(["read", "grep", "glob"].iter().map(|s| s.to_string()).collect())

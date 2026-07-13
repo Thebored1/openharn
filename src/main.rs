@@ -1,6 +1,7 @@
 mod agent;
 mod edit;
 mod tools;
+mod slm_harness;
 
 use serde_json::Value;
 use std::io::{self, Write};
