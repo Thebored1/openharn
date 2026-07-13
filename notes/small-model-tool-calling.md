@@ -8,7 +8,7 @@ tier.
 
 ## Setup
 
-openharn (Rust) driving `llama-server` (llama.cpp build 9608) with
+openharn (Rust) driving `llama-server` (llama.cpp build 9585) with
 `--jinja --ctx-size 8192 -ngl 0 --no-warmup`, on an Intel AVX2 laptop (Windows 11) and a
 Ryzen box. CPU-only throughout: full GPU offload with a 16k KV cache OOM-crashed the 4 GB
 laptop GPU immediately, and these are A1B MoE models (~1B active params), so CPU is fine
@@ -164,7 +164,7 @@ ensures the call is syntactically valid.
 Takeaway: a model that "can't call tools" may just need grammar constraint. The distinction
 between "model can't" and "model won't by default" matters for harness design.
 
-## Follow-up: LFM2-1.2B-Tool behavioral tests (Linux, CPU)
+## Follow-up: LFM2-1.2B-Tool behavioral tests (Linux, llama-server 9585)
 
 LFM2-1.2B-Tool-Q4_K_M (~1.2 GB) tested on Linux with reasoning off:
 
