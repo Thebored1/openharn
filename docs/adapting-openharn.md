@@ -11,7 +11,7 @@ server with no tool-calling — and how to trade generality for reliability on p
 
 Every knob below moves one thing: how much freedom the model has.
 
-- **More freedom** (defaults): all ten tools, native tool-calling, the model decides. Good
+- **More freedom** (defaults): all thirteen tools, native tool-calling, the model decides. Good
   with a capable model, fragile with a weak one.
 - **Less freedom** (strict / narrow): fewer tools, a grammar that forces valid calls, more
   grounding. A weak model can't malform a call or wander, at the cost of doing fewer kinds
@@ -54,6 +54,14 @@ Model mangles arguments (wrong field names, bad JSON):
 ```sh
 OPENHARN_STRICT_TOOLS=1 cargo run -- .
 ```
+
+**Model ignores native tool API** (e.g. LFM2-8B outputs descriptive text instead of
+`<tool_call>`):
+```sh
+OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 cargo run -- .
+```
+This is the winning combo for LFM2-8B on CPU (6/6 behavioral tests). The GBNF grammar
+forces valid `<tool_call>` output that the model wouldn't emit otherwise.
 
 Most reliable agent a weak model can drive:
 ```sh

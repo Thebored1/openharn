@@ -127,3 +127,18 @@ axis from raw capability.
 | `gemma-4-E2B-it-IQ4_XS / -qat-UD-Q4_K_XL` | E2B | IQ4_XS / Q4 QAT | Gemma 4 |
 | `granite-4.0-h-tiny-UD-Q4_K_XL` | 7 B (≈1 B) | Q4_K_XL | Granite 4.0 hybrid MoE |
 | `granite-3.1-1b-a400m-instruct-Q8_0` | 1 B (400 M) | Q8_0 | Granite 3.1 MoE |
+
+## Follow-up: LFM2-8B with grammar-constrained text calls
+
+LFM2-8B-A1B scores 0/4 in default mode (never emits tool calls). But with
+`OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1`, it passes **all 6
+behavioral tests**. The GBNF grammar forces valid `<tool_call>` output that the model
+wouldn't emit otherwise.
+
+This is a harness fix, not a model fix — the grammar was previously broken (underscores in
+GBNF rule names; see `gbnf-grammar-fix.md`). With the fix, the grammar acts as a structural
+guide: the model sees tool descriptions in the prompt, tries to call a tool, and the grammar
+ensures the call is syntactically valid.
+
+Takeaway: a model that "can't call tools" may just need grammar constraint. The distinction
+between "model can't" and "model won't by default" matters for harness design.

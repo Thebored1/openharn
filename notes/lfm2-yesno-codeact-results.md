@@ -1,51 +1,62 @@
-# Notes: LFM2-8B-A1B with YES/NO + Code-as-Action + CodeAct
+# Notes: LFM2-8B-A1B execution modes — full results
 
-## Test Results (YES/NO + CodeAct, `OPENHARN_YESNO=1`)
-
-| Test | Result | Notes |
-|---|---|---|
-| greeting_uses_no_tools | ✅ PASS | |
-| no_repeat_spiral | ✅ PASS | |
-| missing_file_is_reported_not_faked | ❌ FAIL | No tool calls, just text |
-| system_search_uses_scope_flag | ❌ FAIL | Doesn't pick glob_system |
-| edits_real_file_via_anchor | ❌ FAIL | "[yesno] no tools selected" |
-| grounding_limits_total_calls | ❌ FAIL | 0 calls |
-
-**2/6 PASS**
-
-## Why It Fails
-
-| Test | Failure Mode |
-|---|---|
-| missing_file | Model answers "file not found" in text instead of using python to check |
-| system_search | Model doesn't select `glob_system` in YES/NO pass |
-| edit_anchor | YES/NO selects no tools → continues without tools |
-| grounding | 0 tool calls |
-
-The model **only works when explicitly prompted "write python code to..."** — then YES/NO selects python, model writes code, CodeAct executes it.
-
-## When LFM2-8B Works
-
-```bash
-# Explicit python task → works
-OPENHARN_YESNO=1 OPENHARN_NO_THINK=1 ./openharn /workspace
-> in python compute 2+2
-[yesno] selected: ["python"]
-·· python {"code":"2 + 2"}
-Result: 4
-```
-
-## Comparison
+## Test Results
 
 | Mode | greeting | no_repeat | missing_file | glob_system | edit_anchor | grounding | Total |
 |---|---|---|---|---|---|---|---|
-| Default (LFM2) | ✅ | ✅ | ❌ | ✅* | ❌ | ❌ | 3/6 |
-| YES/NO + CodeAct (LFM2) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | 2/6 |
-| Default (MiniCPM) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 6/6 |
-| YES/NO + CodeAct (MiniCPM) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 6/6 |
+| Default (all 12 tools) | ✅ | ✅ | ❌ | ✅* | ❌ | ❌ | 3/6 |
+| YES/NO + CodeAct | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | 2/6 |
+| **PROMPT_TOOLS + STRICT_TOOLS** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **6/6** |
+| SLM harness | ✅ | ✅ | ❌ | ✅* | ❌ | ❌ | 2/6 |
 
 * = false positive (model mentioned glob_system in text, didn't call it)
 
-## Conclusion
+## What works: PROMPT_TOOLS + STRICT_TOOLS
 
-**LFM2-8B is not a general tool-calling model.** The YES/NO + CodeAct combo only helps for explicit python tasks. For a general coding agent on CPU, use MiniCPM-V-4.6 or Qwen 2.5 3B+.
+```bash
+OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 ./openharn /workspace
+```
+
+This is the winning combo for LFM2-8B. Three things happen:
+
+1. **PROMPT_TOOLS**: Tools described in the system prompt text (model ignores native
+   `tools` API)
+2. **STRICT_TOOLS**: GBNF grammar forces output to either a schema-valid `<tool_call>[...]`
+   or plain text — model physically cannot invent field names or malform calls
+3. **NO_THINK**: Skip reasoning (faster on CPU)
+
+### Why it works (vs default mode)
+
+| Factor | Default | PROMPT_TOOLS + STRICT |
+|---|---|---|
+| Tool format | Native `tools` API (model ignores it) | Text descriptions + grammar constraint |
+| Grammar | Never worked (broken rule names — see `gbnf-grammar-fix.md`) | Fixed: dashed rule names, text escape hatch |
+| Model output | Descriptive text about what it would do | Forced into valid `<tool_call>` or honest text answer |
+
+### Example session
+
+```
+> read the file banana_xyz.txt
+  · read {"limit":100,"offset":0,"path":"banana_xyz.txt"}
+[1 calls (1 total). Feeding grounding back and letting model answer.]
+The file banana_xyz.txt does not exist in the current project directory.
+```
+
+## Why YES/NO + CodeAct only gets 2/6
+
+The YES/NO pass correctly selects tools (e.g. `["read"]`), but Pass 2 uses the native
+`tools` API which LFM2-8B ignores — it outputs descriptive text instead of `<tool_call>`.
+The model CAN write valid tool calls when grammar-constrained, but without grammar it
+defaults to prose.
+
+## Practical recommendation
+
+For LFM2-8B on CPU, use **PROMPT_TOOLS + STRICT_TOOLS** (not YES/NO):
+
+```bash
+# Best for LFM2-8B (6/6)
+OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 ./openharn /workspace
+
+# YES/NO + CodeAct only works for explicit python tasks (2/6)
+OPENHARN_YESNO=1 OPENHARN_NO_THINK=1 ./openharn /workspace
+```
