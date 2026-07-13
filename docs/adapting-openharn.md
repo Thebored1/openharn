@@ -63,6 +63,14 @@ OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 cargo run --
 This is the winning combo for LFM2-8B on CPU (6/6 behavioral tests). The GBNF grammar
 forces valid `<tool_call>` output that the model wouldn't emit otherwise.
 
+**Small model hallucinates tool results** (e.g. LFM2-1.2B generates fake file sizes
+instead of calling tools):
+```sh
+OPENHARN_YESNO=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1 cargo run -- .
+```
+YES/NO narrows the tool list per turn, reducing hallucination on complex queries.
+(6/6 behavioral tests for LFM2-1.2B-Tool on CPU.)
+
 Most reliable agent a weak model can drive:
 ```sh
 OPENHARN_NARROW=1 cargo run -- .          # read,grep,glob, grammar-locked, grounded

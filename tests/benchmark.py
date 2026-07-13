@@ -28,8 +28,9 @@ SYSTEM = (ROOT / "src" / "prompt.txt").read_text(encoding="utf-8")
 
 # ---- models: (label, filename, extra llama-server flags) ---------------------
 # Excluded per the user's instruction (unreliable / not worth the time):
-#   LFM2-1.2B-Tool, LFM2.5-1.2B-Instruct  — the 1.2B tier hallucinates tool
-#     *results* instead of emitting real tool calls.
+#   LFM2.5-1.2B-Instruct  — the 1.2B tier hallucinates tool *results* instead of
+#     emitting real tool calls on complex queries (LFM2-1.2B-Tool passes 5/6 behavioral
+#     tests but fails grounding_limits_total_calls).
 #   gemma-3n-E2B-IQ3_XXS, gemma-4-E2B-IQ4_XS — dropped from the research set.
 #   granite-4.1-3b — excluded (dense 3B, slowest on CPU).
 MODELS = [

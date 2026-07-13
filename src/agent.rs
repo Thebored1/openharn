@@ -129,7 +129,6 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
     let schemas = active_schemas(&allowed);
 
     // YES/NO two-pass tool selection (NLT 2025): if enabled, run Pass 1 each turn
-    let mut yesno_selected: Option<Vec<String>> = None;
     let mut effective_schemas = active_schemas(&allowed);
     if yesno_mode {
         // Re-run Pass 1 each turn since relevant tools may change
@@ -137,7 +136,6 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         if selected.is_empty() {
             println!("[yesno] no tools selected — continuing without tools");
         } else {
-            yesno_selected = Some(selected.clone());
             println!("[yesno] selected: {:?}", selected);
             effective_schemas = active_schemas(&Some(selected));
         }
@@ -148,7 +146,7 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         // Keep the conversation within the model's context before every request.
         fit_context(history, budget);
         let mut wire = if prompt_tools {
-            flatten_for_prompt_tools(history, &schemas)
+            flatten_for_prompt_tools(history, &effective_schemas)
         } else {
             history.clone()
         };

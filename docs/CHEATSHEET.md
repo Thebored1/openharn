@@ -117,6 +117,9 @@ Override via env: `OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHARN_PORT`.
   writes a Markdown ```` ```bash ```` fence instead. See
   [`small-model-tool-calling.md`](../notes/small-model-tool-calling.md) for the full study and
   the 11-model benchmark.
+- **LFM2-1.2B-Tool** (tool-tuned, 1.2B) scores 4/6 default, **6/6 with YESNO+STRICT**.
+  The YES/NO two-pass narrows the tool list per turn, reducing hallucination on complex
+  queries. Recipe: `OPENHARN_YESNO=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_NO_THINK=1`.
 - Reasoning models are more reliable but pay a **thinking tax** (100s–1000s of tokens
   per turn) that dominates CPU wall-clock.
 
