@@ -4,7 +4,7 @@
 
 ## Related work
 
-The SLM harness (`OPENHARN_SLM=1`) implements the **slm-agents** architecture (Lin et al., arXiv:2604.25850): the model receives a compact JSON observation with `valid_actions`, emits a single JSON action, and the harness validates pre/post execution with retry localization. This is distinct from **ReAct** (Yao et al., arXiv:2210.03629) which keeps full history and advertises all tools, and from **CodeAct** (Wang et al., arXiv:2402.01030) which uses executable Python as the action space.
+The SLM harness (`OPENHARN_SLM=1`) implements the **slm-agents** architecture (Ranjan & Talluri, 2026; GitHub: IshaanAyaan/slm-agents): the model receives a compact JSON observation with `valid_actions`, emits a single JSON action, and the harness validates pre/post execution with retry localization. This is distinct from **ReAct** (Yao et al., arXiv:2210.03629) which keeps full history and advertises all tools, and from **CodeAct** (Wang et al., arXiv:2402.01030) which uses executable Python as the action space.
 
 The key finding — that the SLM harness works for models that *already* call tools (MiniCPM 6/6) but doesn't create ability where none exists (LFM2-8B 2/6) — aligns with the slm-agents result: the custom harness + specialist model (C5) beats generic harness + same model (C3/C4). Our grammar-constrained mode (`PROMPT_TOOLS` + `STRICT_TOOLS`) is a prompt-only approximation that reaches 6/6 on LFM2-8B without fine-tuning.
 

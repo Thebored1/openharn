@@ -8,7 +8,7 @@ the failure modes, model requirements, and debugging surfaces don't overlap.
 
 ## Related work
 
-The **SLM harness** (`OPENHARN_SLM=1`) is a direct port of the five harness requirements from the **slm-agents** paper (Lin et al., arXiv:2604.25850): externalized state, constrained action space, pre/post verification, per-step retry with feedback, deterministic verifier. The **grammar-constrained text mode** (`PROMPT_TOOLS` + `STRICT_TOOLS`) implements the **NLT** approach (Johnson et al., arXiv:2510.14453): tools described in natural language, GBNF grammar forces valid format. The **YES/NO two-pass** mode (`YESNO=1`) is the NLT "tool selection" pass. The default ReAct loop follows **ReAct** (Yao et al., arXiv:2210.03629) and **Toolformer** (Schick et al., arXiv:2302.04761) patterns.
+The **SLM harness** (`OPENHARN_SLM=1`) is a direct port of the five harness requirements from the **slm-agents** paper (Ranjan & Talluri, 2026; GitHub: IshaanAyaan/slm-agents): externalized state, constrained action space, pre/post verification, per-step retry with feedback, deterministic verifier. The **grammar-constrained text mode** (`PROMPT_TOOLS` + `STRICT_TOOLS`) implements the **NLT** approach (Johnson et al., arXiv:2510.14453): tools described in natural language, GBNF grammar forces valid format. The **YES/NO two-pass** mode (`YESNO=1`) is the NLT "tool selection" pass. The default ReAct loop follows **ReAct** (Yao et al., arXiv:2210.03629) and **Toolformer** (Schick et al., arXiv:2302.04761) patterns.
 
 ## 1. Default ReAct loop (`OPENHARN_SLM=0` or unset)
 

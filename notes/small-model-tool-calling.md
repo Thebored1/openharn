@@ -18,7 +18,7 @@ This benchmark operationalizes the **SLM paper's** (Belcak et al., arXiv:2506.02
 
 This note validates the core thesis of **"Small Language Models are the Future of Agentic AI"** (Belcak et al., NVIDIA, arXiv:2506.02153v2): SLMs (<10B) are sufficiently powerful for agentic tasks when paired with a well-designed harness. The V1–V3 claims (sufficient capability, operational suitability, economic necessity) map directly to what we observe: tool-tuned 1.2B models pass behavioral suites, while larger untuned MoEs fail.
 
-The **slm-agents** paper (Lin et al., arXiv:2604.25850) demonstrates the same interaction: a 1.5B specialist + co-designed harness matches a 72B generalist. Our `OPENHARN_STRICT_TOOLS` + `YESNO` combo is a prompt-only approximation of their "custom harness + distilled specialist" co-design.
+The **slm-agents** paper (Ranjan & Talluri, 2026; GitHub: IshaanAyaan/slm-agents) demonstrates the same interaction: a 1.5B specialist + co-designed harness matches a 72B generalist. Our `OPENHARN_STRICT_TOOLS` + `YESNO` combo is a prompt-only approximation of their "custom harness + distilled specialist" co-design.
 
 ## Setup
 

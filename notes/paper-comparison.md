@@ -13,8 +13,8 @@ This note situates openharn against the prompt-only SLM agent literature. openha
 | **TALM** | Parisi, A., Zhao, Y., & Fiedel, N. (2022). TALM: Tool Augmented Language Models. arXiv:2205.12255. |
 | **CodeAct** | Wang, X., Chen, Y., Yuan, L., Zhang, Y., Li, Y., Peng, H., & Ji, H. (2024). Executable Code Actions Elicit Better LLM Agents. *ICML 2024*. arXiv:2402.01030. |
 | **NLT** | Johnson, R. T., Pain, M. D., & West, J. D. (2025). Natural Language Tools: A Natural Language Approach to Tool Calling In Large Language Agents. arXiv:2510.14453. |
-| **EASYTOOL** | Hsieh, C.-Y., Chen, S., Li, C., Fujii, Y., Ratner, A., Lee, C.-Y., et al. (2023). Tool Documentation Enables Zero-Shot Tool-Usage with Large Language Models. arXiv:2308.00675. (EASYTOOL is a follow-up; see also *EASYTOOL: Enhancing LLM-based Agents with Concise Tool Instruction*, NAACL 2025.) |
-| **slm-agents** | Lin, Y., et al. (2024). Specialized Small-Model Subagents: Co-designing Fine-tuned SLMs and Task-Specific Harnesses. arXiv:2604.25850. |
+| **EASYTOOL** | Yuan, Y., et al. (2024). EASYTOOL: Enhancing LLM-based Agents with Concise Tool Instruction. *NAACL 2025*. arXiv:2401.06201. |
+| **slm-agents** | Ranjan, I. & Talluri, G. (2026). Specialized Small-Model Subagents: Co-Designing a Fine-Tuned SLM and a Task-Specific Harness for Cost-Efficient Multi-Agent Systems. GitHub: IshaanAyaan/slm-agents (white paper: paper/white_paper.md). |
 | **Probe&Prefill / When2Tool** | Sun, C.-E., Liu, L., Yan, G., Wang, Z., & Weng, T.-W. (2026). LLM Agents Already Know When to Call Tools — Even Without Reasoning. arXiv:2605.09252. |
 | **ASA** | Wang, Y., Zhou, R., Fu, R., Cao, S., Zeng, H., Lu, J., et al. (2026). ASA: Training-Free Representation Engineering for Tool-Calling Agents. arXiv:2602.04935. |
 | **SLM Position Paper** | Belcak, P., Heinrich, G., Diao, S., Fu, Y., Dong, X., Muralidharan, S., Lin, Y., & Molchanov, P. (2025). Small Language Models are the Future of Agentic AI. arXiv:2506.02153v2. |
@@ -39,7 +39,7 @@ This note situates openharn against the prompt-only SLM agent literature. openha
 
 ### 2. SLM Harness (`OPENHARN_SLM=1`)
 
-Direct port of the **five harness requirements** from **slm-agents** (Lin et al., 2024, §3).
+Direct port of the **five harness requirements** from **slm-agents** (Ranjan & Talluri, 2026, §3).
 
 | slm-agents Requirement | Paper Implementation (C5) | openharn Implementation |
 |------------------------|---------------------------|--------------------------|
@@ -137,13 +137,13 @@ Direct port of the **five harness requirements** from **slm-agents** (Lin et al.
 
 | Paper | Core Idea | openharn Status |
 |-------|-----------|-----------------|
-| **ASA** | Gated shared+local activation steering: shared boundary direction calibrates tool-mode entry; domain-local residual steers schema compliance. Improves Qwen3-8B first-call accuracy 24.5% → 41.9%. | **Not implemented** — requires white-box forward hooks. |
+| **ASA** | Gated shared+local activation steering: shared boundary direction calibrates tool-mode entry; domain-local residual steers schema compliance. Improves Qwen2.5-1.5B on MTU-Bench strict tool-use F1 from 0.18 to 0.50. | **Not implemented** — requires white-box forward hooks. |
 
 **Relevance**: ASA solves **schema compliance** (valid JSON, correct tool names, args). openharn's `STRICT_TOOLS` GBNF grammar achieves similar format enforcement at inference time without model internals.
 
 ---
 
-### 8. EASYTOOL (Hsieh et al., 2023 / NAACL 2025)
+### 8. EASYTOOL (Yuan et al., 2024 / NAACL 2025)
 
 | Paper | Core Idea | openharn Approach |
 |-------|-----------|-------------------|
