@@ -117,3 +117,21 @@ actually clear it on CPU: [`small-model-tool-calling.md`](small-model-tool-calli
 All three mechanisms are unit-tested in [`src/agent.rs`](../src/agent.rs); reproduce with
 `OPENHARN_PROMPT_TOOLS=1` / `OPENHARN_STRICT_TOOLS=1` / `OPENHARN_NARROW=1` (see
 [`adapting-openharn.md`](../docs/adapting-openharn.md)).
+
+## glob vs grep: a name/content confusion worth guarding
+
+The name↔content swap is the most common *wrong-tool* mistake small models make, in
+both directions:
+
+- **name search → `grep`/`grep_system`** (should be `glob`/`glob_system`): "find a file
+  called X" triggers a content search. Guarded by `find_file_uses_glob_not_grep` in
+  [`tests/behavior.py`](../tests/behavior.py).
+- **content search → `glob`/`glob_system`** (should be `grep`/`grep_system`): "search files
+  for the string X" triggers a name search. Guarded by `grep_for_content_not_glob`.
+
+The `OPENHARN_STRICT_TOOLS` grammar (above) *reduces* both — a weak model forced to a
+valid call still reaches for `glob` on a `grep` job, but at least emits a parseable call
+instead of text. The real fix is prompt/schema wording: `src/prompt.txt` now says
+"find a file by NAME → glob; grep ONLY for CONTENTS", and the `glob`/`grep` schemas say
+"PREFER glob over grep" / "Use grep ONLY to search file CONTENTS". Both behavioral cases
+pass on LFM2.5 with that wording; they are regression locks, not one-off checks.

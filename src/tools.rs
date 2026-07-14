@@ -627,7 +627,7 @@ pub fn schemas() -> Value {
         }},
         {"type":"function","function":{
             "name":"glob",
-            "description":"Fast file pattern matching in the PROJECT directory. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by name inside the project. To search the ENTIRE computer, use the 'glob_system' tool instead.",
+            "description":"Fast file pattern matching in the PROJECT directory. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by NAME inside the project. When you need to locate a file by its name, PREFER glob over grep. To search the ENTIRE computer, use the 'glob_system' tool instead.",
             "parameters":{"type":"object","properties":{
                 "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or Cargo.toml."},
                 "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root."}
@@ -642,7 +642,7 @@ pub fn schemas() -> Value {
         }},
         {"type":"function","function":{
             "name":"grep",
-            "description":"Search file CONTENTS by regex in the PROJECT directory. Returns matching `file:line: text`. Supports full regex. Filter files with `include` (e.g. \"*.rs\", \"*.{ts,tsx}\"). To search the ENTIRE computer, use the 'grep_system' tool instead.",
+            "description":"Search file CONTENTS by regex in the PROJECT directory. Returns matching `file:line: text`. Supports full regex. Filter files with `include` (e.g. \"*.rs\", \"*.{ts,tsx}\"). Use grep ONLY to search file CONTENTS — never to find a file by its name (use glob or glob_system for that). To search the ENTIRE computer, use the 'grep_system' tool instead.",
             "parameters":{"type":"object","properties":{
                 "pattern":{"type":"string","description":"Regular expression to search for in file contents."},
                 "include":{"type":"string","description":"Only search files whose name matches this glob (optional)."},

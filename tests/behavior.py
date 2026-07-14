@@ -98,6 +98,19 @@ def find_file_uses_glob_not_grep():
 
 
 @case
+def grep_for_content_not_glob():
+    """"search file contents for X" must invoke grep/grep_system, not glob/glob_system
+    (wrong tool for content-based search — the reverse of find_file_uses_glob_not_grep)."""
+    out, _ = run(["search every file on the system for the string 'SECRET_TOKEN'"])
+    clean = ansi_strip(out)
+    calls = [ln.strip() for ln in clean.splitlines() if ln.strip().startswith("· ")]
+    used_grep = any("grep" in c for c in calls)
+    used_glob = any("glob" in c for c in calls)
+    return (used_grep and not used_glob,
+            f"tool calls: {calls}")
+
+
+@case
 def edits_real_file_via_anchor():
     """A concrete edit request: model reads the file and then either describes
     the edit in text or performs it (the former being acceptable with the 1-call

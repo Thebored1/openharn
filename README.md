@@ -144,6 +144,8 @@ Notes from building and stress-testing openharn against real small models on CPU
   prompt-tools mode for servers with no tool API.
 - [**Reasoning tokens dominate CPU latency**](notes/reasoning-tax.md) — thinking, not
   tokens/sec, sets per-turn time; the 3–6× win from reasoning-off; MoE size ≠ speed.
+- [**How to implement openharn**](notes/how-to-implement-openharn.md) — the design/architecture
+  intent behind the code: the loop, the tool surface, grounding, and the reliability ladder.
 - [**How openharn is implemented as Myelin**](notes/myelin-implementation.md) — code-level
   walkthrough of the Myelin notes-backend adaptation on this branch.
 - [**Adapting openharn**](docs/adapting-openharn.md) — modes and how to modify it for your
