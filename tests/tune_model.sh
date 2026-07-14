@@ -1,5 +1,8 @@
 #!/usr/env bash
-# tune_model.sh — find the best openharn config (env vars + server flags ONLY,
+# tune_model.sh — Unix/Linux/macOS shell port. For a cross-platform version that
+# also runs on Windows, use tests/tune_model.py (python tests/tune_model.py ...).
+#
+# tune_model.sh finds the best openharn config (env vars + server flags ONLY,
 # never the system prompt) for a given GGUF on this machine.
 #
 # It launches llama-server, probes whether the model does native tool-calling and

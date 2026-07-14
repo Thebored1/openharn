@@ -112,16 +112,43 @@ The first CLI argument is the working directory the agent operates on (default: 
 
 ### Per-model config files
 
-`tests/tune_model.sh` finds the best flag combo for a model and writes it to
-`configs/<model>.conf` — a plain `KEY=value` list (one var per line; `#` comments
-and blank lines ignored). openharn loads this automatically, so you never retype
-the tuned `OPENHARN_*` flags:
+`tests/tune_model.py` (or `tests/tune_model.sh` on Unix) finds the best flag
+combo for a model and writes it to `configs/<model>.conf` — a plain `KEY=value`
+list (one var per line; `#` comments and blank lines ignored). openharn loads
+this automatically, so you never retype the tuned `OPENHARN_*` flags:
 
 - **Explicit:** `./target/debug/openharn . --config configs/<model>.conf`
 - **Auto-load:** if `configs/<OPENHARN_MODEL>.conf` exists, openharn loads it with
   no argument. You can also set `OPENHARN_CONFIG=<path>`.
 
 So the tune run *is* the save step — the winning config is recorded and reused.
+
+### Tuning (find the best config for a model)
+
+The tuner launches `llama-server`, probes whether the model does native
+tool-calling and whether it thinks by default, then runs `tests/behavior.py`
+across candidate flag combos and picks the highest pass-score (tie-break:
+speed). It writes the winner to `configs/<model>.conf` and a ranking log to
+`tests/tune_logs/<model>.md`.
+
+```sh
+# cross-platform (recommended): Linux, macOS, Windows
+python tests/tune_model.py ~/Downloads/LFM2.5-8B-A1B-APEX-I-Compact.gguf
+
+# Unix/Linux/macOS shell only:
+./tests/tune_model.sh ~/Downloads/LFM2.5-8B-A1B-APEX-I-Compact.gguf
+```
+
+Accuracy / runtime tradeoff: `--pruned` (default, probe-decided subset),
+`--full` (exhaustive, slow), `--quick` (4 representative cases). Extra flags:
+`--port N`, `--llama <path>`, `--ctx N`. See the script header for details.
+
+After tuning, run openharn with the generated config:
+
+```sh
+OPENHARN_MODEL=LFM2.5-8B-A1B-APEX-I-Compact ./target/debug/openharn . \
+  --config configs/LFM2.5-8B-A1B-APEX-I-Compact.conf
+```
 
 ## Testing
 
