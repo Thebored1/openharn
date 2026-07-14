@@ -146,6 +146,8 @@ Notes from building and stress-testing openharn against real small models on CPU
   tokens/sec, sets per-turn time; the 3–6× win from reasoning-off; MoE size ≠ speed.
 - [**Running BitNet on CPU**](notes/bitnet-on-cpu.md) — building bitnet.cpp, BitNet's
   hardware-sensitive speed, and finding out it can't reliably use tools.
+- [**How to implement openharn**](notes/how-to-implement-openharn.md) — the design/architecture
+  intent behind the code: the loop, the tool surface, grounding, and the reliability ladder.
 - [**Adapting openharn**](docs/adapting-openharn.md) — modes and how to modify it for your
   model / server / use case.
 
