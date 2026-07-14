@@ -61,10 +61,14 @@ of scope.
 ## Recommended model
 
 Best in testing so far (CPU, from the [benchmark](notes/small-model-tool-calling.md)):
-**`LFM2.5-8B-A1B-APEX-I-Compact`** — reliably emits tool calls (4/4 on the scenario),
-the best balance of speed × size × reasoning of the tested set. Run it reasoning-off
-(`OPENHARN_NO_THINK=1`) for ~3× faster turns on CPU. Avoid the `LFM2-v2 8B-A1B` base —
-it won't emit tool calls at any quant.
+
+- **`LFM2-8B-A1B-UD-Q2_K_XL`** — our default pick. A 2-bit quant that emits tool
+  calls reliably and runs as fast as (often faster than) Qwen3.5-0.8B at Q8 — a
+  *sub-1B* model — on CPU. Best speed × capability × tool-calling for the local
+  default.
+- **`LFM2.5-8B-A1B`** (incl. the `APEX-I-Compact` build) — also emits tool calls
+  and adds reasoning; run reasoning-off (`OPENHARN_NO_THINK=1`) for ~3× faster
+  turns on CPU.
 
 ## Quick start
 
