@@ -372,7 +372,9 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
 
         if tool_calls.is_empty() {
 
-            println!("\n[intent] {intent} — model responded with text");
+            if friendly_mode {
+                println!("\n[intent] {intent} — model responded with text");
+            }
             println!("{}", content);
             return; // text was already streamed live
         }
