@@ -68,6 +68,11 @@ Add a tool = add a schema entry + a match arm. No other wiring.
 - **Scope honesty**: `glob`/`grep` stay in the project; `glob_system`/`grep_system`
   search the whole machine (roots resolved by the harness, never by the model).
   A search that finds nothing states its true scope and offers the system tool.
+  The name↔content swap is the most common wrong-tool mistake: `glob`/`glob_system`
+  are for finding a file **by name**, `grep`/`grep_system` for searching file
+  **contents**. Wording in `prompt.txt` + the `glob`/`grep` schemas enforces this, and
+  `tests/behavior.py` locks it with `find_file_uses_glob_not_grep` (name→glob) and
+  `grep_for_content_not_glob` (content→grep).
 - **Cap + trim**: a single tool result is capped (`TOOL_RESULT_CAP`); the whole
   conversation is trimmed to `HISTORY_BUDGET` (system message always kept, oldest
   whole turns dropped first so a tool result is never orphaned from its call).
