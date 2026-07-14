@@ -400,7 +400,7 @@ def main():
             f"(score {win_s}/{win_t}, {win_dt}s)\n"
         )
         f.write(f"# server: {server_cmd}\n")
-        f.write(f"# run:    OPENHARN_MODEL={stem} ./{EXE.name} . --config {conf}\n")
+        f.write(f"# run:    OPENHARN_MODEL={stem} ./target/debug/openharn . --config {conf}\n")
         for k, v in candidate_env(win_c).items():
             f.write(f"{k}={v}\n")
 
