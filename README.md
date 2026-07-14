@@ -110,6 +110,19 @@ Override the model/binary via env vars (`OPENHARN_GGUF`, `LLAMA_SERVER`, `OPENHA
 
 The first CLI argument is the working directory the agent operates on (default: cwd).
 
+### Per-model config files
+
+`tests/tune_model.sh` finds the best flag combo for a model and writes it to
+`configs/<model>.conf` — a plain `KEY=value` list (one var per line; `#` comments
+and blank lines ignored). openharn loads this automatically, so you never retype
+the tuned `OPENHARN_*` flags:
+
+- **Explicit:** `./target/debug/openharn . --config configs/<model>.conf`
+- **Auto-load:** if `configs/<OPENHARN_MODEL>.conf` exists, openharn loads it with
+  no argument. You can also set `OPENHARN_CONFIG=<path>`.
+
+So the tune run *is* the save step — the winning config is recorded and reused.
+
 ## Testing
 
 ```sh
