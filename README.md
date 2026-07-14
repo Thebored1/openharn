@@ -160,3 +160,22 @@ The edit engine (`src/edit.rs`) is a Rust port of [opencode](https://github.com/
 replacer, and the system prompt is adapted from opencode's default prompt — both used
 under opencode's MIT license. Full attribution is in [`NOTICE`](NOTICE) and
 [`LICENSES/opencode-MIT.txt`](LICENSES/opencode-MIT.txt).
+
+## Myelin notes backend (example adaptation)
+
+The **`myelin-tools` branch** demonstrates building a completely different agent on top of
+openharn's harness: a local notes app with tools `edit_note`, `write_note`, `format_note`,
+`search_notes`, `web_search` — no filesystem, just one open note.
+
+```sh
+# Run the Myelin HTTP server (proxies to upstream llama-server)
+OPENHARN_MYELIN=1 OPENHARN_MYELIN_UPSTREAM=http://127.0.0.1:8080/v1 cargo run
+# → serves OpenAI-compatible /v1/chat/completions on :8090
+
+# Run Myelin's benchmark (points at the proxy)
+python myelin_bench.py --url http://127.0.0.1:8090/v1 --model myelin
+```
+
+See [`docs/adapting-openharn-myeelin.md`](docs/adapting-openharn-myeelin.md) for the full
+adaptation recipe — the same pattern applies to any domain (SQL explorer, browser
+automator, K8s operator, etc.).

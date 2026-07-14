@@ -2,12 +2,22 @@ mod agent;
 mod edit;
 mod tools;
 mod slm_harness;
+mod myelin;
 
 use serde_json::Value;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
 fn main() {
+    // Myelin HTTP server mode: OPENHARN_MYELIN=1 serves /v1/chat/completions on OPENHARN_MYELIN_PORT (default 8090)
+    if std::env::var_os("OPENHARN_MYELIN").is_some() {
+        let port = std::env::var("OPENHARN_MYELIN_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8090);
+        return myelin::run_myelin_server(port);
+    }
+
     // Config via env, defaulting to a local llama-server. For a cloud provider,
     // set OPENHARN_BASE_URL + OPENHARN_API_KEY (any OpenAI-compatible endpoint).
     let base_url =
