@@ -970,11 +970,11 @@ fn active_schemas(allowed: &Option<Vec<String>>) -> Value {
 const GRAMMAR_TAIL: &str = r#"value ::= object | array | string | number | "true" | "false" | "null"
 object ::= "{" ws ( string ws ":" ws value ( ws "," ws string ws ":" ws value )* )? ws "}"
 array ::= "[" ws ( value ( ws "," ws value )* )? ws "]"
-string ::= "\"" ( [^"\\] | "\\" ["\\/bfnrt] )* "\""
+string ::= "\"" ( [^"\\\n\r] | "\\" ["\\/bfnrt] )* "\""
 number ::= "-"? [0-9]+ ( "." [0-9]+ )?
 integer ::= "-"? [0-9]+
 boolean ::= "true" | "false"
-ws ::= [ \t\n]*
+ws ::= [ \t\n\r]*
 "#;
 
 /// The GBNF grammar for a single argument value, tightened by JSON-schema type/enum where
