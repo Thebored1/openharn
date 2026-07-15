@@ -57,6 +57,10 @@ of scope.
   `OPENHARN_NARROW=1` locks it to read-only navigation for a maximally reliable agent.
   See the [adaptation guide](docs/adapting-openharn.md).
 - **Local or cloud** — any OpenAI-compatible endpoint via `base_url` + optional key.
+- **Serve mode** (`--serve` / `OPENHARN_SERVE=1`) — openharn itself becomes an
+  OpenAI-compatible HTTP server (`POST /v1/chat/completions`, `GET /v1/models`,
+  `GET /health`) and runs its coding-agent loop per request. Drive it from any
+  OpenAI client, harness, or benchmark.
 
 ## Recommended model
 
@@ -160,6 +164,44 @@ OPENHARN_MODEL=LFM2.5-8B-A1B-APEX-I-Compact ./target/debug/openharn . \
 cargo test                 # unit tests (edit engine, tools, context-fit)
 python tests/behavior.py   # behavioral tests against a live model on :8080
 ```
+
+## Serving (--serve mode)
+
+openharn can act as the server instead of just the client: it exposes an
+OpenAI-compatible endpoint and runs the full coding-agent loop (tools, retries,
+context-fit, circuit-breaker) on each request. This is how you drive openharn
+from an external harness, another model, or a benchmark like SWE-bench.
+
+```sh
+# start a model somewhere (CPU target):
+llama-server -m your-model.gguf --jinja --ctx-size 16384 -ngl 0 --port 8080
+
+# serve openharn on :8090 (tune or pass a config for best results):
+OPENHARN_MODEL=lfm2.5 ./target/debug/openharn . \
+  --serve --serve-port 8090 --config configs/<model>.conf
+
+# any OpenAI client now talks to openharn:
+curl -s http://127.0.0.1:8090/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"lfm2.5","messages":[{"role":"user","content":"What is 2+2?"}]}'
+```
+
+Endpoints:
+
+- `POST /v1/chat/completions` — runs the agent loop; `--config`/env flags tune the
+  agent, `temperature`/`max_tokens` from the request are passed through.
+- `GET /v1/models` — lists the configured `OPENHARN_MODEL`.
+- `GET /health` — `{"status":"ok"}`.
+
+Flags / env:
+
+| flag | env | default | meaning |
+|---|---|---|---|
+| `--serve` | `OPENHARN_SERVE=1` | off | enable serve mode |
+| `--serve-port N` | `OPENHARN_SERVE_PORT` | `8090` | listen port |
+
+Each request runs in its own thread on a fresh session rooted at the served
+working directory, so concurrent requests are isolated.
 
 The behavioral suite encodes real failure cases (over-eager edits, spirals, faked
 "not found", scope honesty) — every misbehavior becomes a regression test.

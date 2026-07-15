@@ -2,6 +2,7 @@ mod agent;
 mod edit;
 mod tools;
 mod slm_harness;
+mod serve;
 mod myelin;
 
 use serde_json::Value;
@@ -44,6 +45,7 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let mut cwd_arg: Option<String> = None;
+    let mut serve_flag = false;
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
@@ -57,6 +59,12 @@ fn main() {
             }
         } else if let Some(p) = a.strip_prefix("--config=") {
             config_path = Some(p.to_string());
+            i += 1;
+        } else if a == "--serve" {
+            serve_flag = true;
+            i += 1;
+        } else if let Some(p) = a.strip_prefix("--serve=") {
+            serve_flag = p != "0" && p != "false";
             i += 1;
         } else {
             if cwd_arg.is_none() {
@@ -118,6 +126,17 @@ fn main() {
         temperature: 0.2,
         friendly_results,
     };
+
+    // OpenAI-compatible serving mode: OPENHARN_SERVE=1 (or --serve) exposes the
+    // coding-agent loop as /v1/chat/completions instead of the REPL.
+    if serve_flag || std::env::var_os("OPENHARN_SERVE").is_some() {
+        let port = std::env::var("OPENHARN_SERVE_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8090);
+        serve::run_agent_server(cfg, cwd, port);
+        return;
+    }
 
     println!(
         "openharn · {} · model={} · dir={}",

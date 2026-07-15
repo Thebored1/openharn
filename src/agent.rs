@@ -15,6 +15,7 @@ use std::io::{self, BufRead, BufReader, Write};
 
 /// One OpenAI-compatible endpoint. Local (`llama-server`, no key) or a cloud
 /// provider (base_url + key) — same loop either way.
+#[derive(Clone)]
 pub struct Config {
     pub base_url: String,
     pub model: String,
