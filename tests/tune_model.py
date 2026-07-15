@@ -27,7 +27,7 @@ configs/<model>.conf — the per-model config file openharn loads with
 save step: the user reuses the result instead of retyping flags.
 
 llama-server: REQUIRED (preinstalled). Located via --llama, $LLAMA_SERVER,
-PATH, or the known myelin cpu build; errors clearly if none found.
+PATH, or a known local build; errors clearly if none found.
 """
 
 import argparse
@@ -46,7 +46,6 @@ EXE = ROOT / "target" / "debug" / "openharn"
 BEHAVIOR = ROOT / "tests" / "behavior.py"
 LOGS = ROOT / "tests" / "tune_logs"
 CONFIGS = ROOT / "configs"
-KNOWN_LLAMA = Path("/home/paper/.local/share/com.paper.myelin/bin/cpu/llama-server")
 
 QUICK_CASES = "greeting_uses_no_tools,find_file_uses_glob_not_grep,missing_file_is_reported_not_faked,edits_real_file_via_anchor"
 
@@ -71,8 +70,6 @@ def detect_llama(explicit):
 
     if which("llama-server"):
         return "llama-server"
-    if KNOWN_LLAMA.exists():
-        return str(KNOWN_LLAMA)
     sys.exit(
         "ERROR: llama-server binary not found.\n"
         "  Install llama.cpp, pass --llama <path>, or set LLAMA_SERVER."

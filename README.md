@@ -66,13 +66,8 @@ of scope.
 
 Best in testing so far (CPU, from the [benchmark](notes/small-model-tool-calling.md)):
 
-- **`LFM2-8B-A1B-UD-Q2_K_XL`** — our default pick. A 2-bit quant that emits tool
-  calls reliably and runs as fast as (often faster than) Qwen3.5-0.8B at Q8 — a
-  *sub-1B* model — on CPU. Best speed × capability × tool-calling for the local
-  default.
-- **`LFM2.5-8B-A1B`** (incl. the `APEX-I-Compact` build) — also emits tool calls
-  and adds reasoning; run reasoning-off (`OPENHARN_NO_THINK=1`) for ~3× faster
-  turns on CPU.
+- **`LFM2.5-8B-A1B`** (incl. the `APEX-I-Compact` build) — emits tool calls reliably with prompt-tools + strict; run reasoning-off (`OPENHARN_NO_THINK=1`) for ~3× faster turns on CPU.
+- **`LFM2-8B-A1B-UD-Q2_K_XL`** — 2-bit quant that emits tool calls **only with `OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1`** (text-form + GBNF grammar). Native tool-calling does not work at this quant. Best speed × capability for local default when using the tuned config.
 
 ## Quick start
 
@@ -232,8 +227,6 @@ Notes from building and stress-testing openharn against real small models on CPU
   tokens/sec, sets per-turn time; the 3–6× win from reasoning-off; MoE size ≠ speed.
 - [**How to implement openharn**](notes/how-to-implement-openharn.md) — the design/architecture
   intent behind the code: the loop, the tool surface, grounding, and the reliability ladder.
-- [**How openharn is implemented as Myelin**](notes/myelin-implementation.md) — code-level
-  walkthrough of the Myelin notes-backend adaptation on this branch.
 - [**Adapting openharn**](docs/adapting-openharn.md) — modes and how to modify it for your
   model / server / use case.
 
@@ -244,26 +237,26 @@ Benchmark harness: [`tests/benchmark.py`](tests/benchmark.py); raw results in
 
 openharn is MIT licensed (see `LICENSE`).
 
-The edit engine (`src/edit.rs`) is a Rust port of [opencode](https://github.com/sst/opencode)'s
-replacer, and the system prompt is adapted from opencode's default prompt — both used
-under opencode's MIT license. Full attribution is in [`NOTICE`](NOTICE) and
-[`LICENSES/opencode-MIT.txt`](LICENSES/opencode-MIT.txt).
+## GBNF string rule fix (important for LFM2 at low quants)
 
-## Myelin notes backend (example adaptation)
+The strict-mode grammar (`OPENHARN_STRICT_TOOLS=1`) generates a GBNF rule for JSON
+strings. The original rule allowed literal newlines/carriage returns inside strings:
 
-The **`myelin-tools` branch** demonstrates building a completely different agent on top of
-openharn's harness: a local notes app with tools `edit_note`, `write_note`, `format_note`,
-`search_notes`, `web_search` — no filesystem, just one open note.
-
-```sh
-# Run the Myelin HTTP server (proxies to upstream llama-server)
-OPENHARN_MYELIN=1 OPENHARN_MYELIN_UPSTREAM=http://127.0.0.1:8080/v1 cargo run
-# → serves OpenAI-compatible /v1/chat/completions on :8090
-
-# Run Myelin's benchmark (points at the proxy)
-python myelin_bench.py --url http://127.0.0.1:8090/v1 --model myelin
+```bnf
+string ::= "\"" ( [^"\\] | "\\" ["\\/bfnrt] )* "\""
 ```
 
-See [`docs/adapting-openharn-myeelin.md`](docs/adapting-openharn-myeelin.md) for the full
-adaptation recipe — the same pattern applies to any domain (SQL explorer, browser
-automator, K8s operator, etc.).
+At low quants (e.g. LFM2-8B Q2_K_XL), the model sometimes emits literal `\n` bytes
+inside a JSON string value instead of the escaped `\n` sequence. This produces
+invalid JSON that `serde_json` rejects in `parse_text_tool_calls`, silently
+dropping the tool call.
+
+**Fix** (`src/agent.rs:973`): exclude newline/carriage-return from the unescaped
+character class:
+
+```bnf
+string ::= "\"" ( [^"\\\n\r] | "\\" ["\\/bfnrt] )* "\""
+```
+
+Now the grammar forces the model to escape newlines (`\n` → `\\n`), producing
+valid JSON that parses correctly.

@@ -26,7 +26,7 @@
 # tests/tune_logs/<model>.md.
 #
 # llama-server: REQUIRED (preinstalled). Located via --llama, $LLAMA_SERVER,
-# PATH, or the known myelin cpu build; errors clearly if none found.
+# PATH, or a known local build; errors clearly if none found.
 
 set -u
 MODE="${1:-}"
@@ -56,8 +56,6 @@ detect_llama () {
   if [ -n "${LLAMA_ARG:-}" ]; then LLAMA="$LLAMA_ARG"
   elif [ -n "${LLAMA_SERVER:-}" ]; then LLAMA="$LLAMA_SERVER"
   elif command -v llama-server >/dev/null 2>&1; then LLAMA="llama-server"
-  elif [ -x /home/paper/.local/share/com.paper.myelin/bin/cpu/llama-server ]; then
-       LLAMA="/home/paper/.local/share/com.paper.myelin/bin/cpu/llama-server"
   else
     echo "ERROR: llama-server binary not found." >&2
     echo "  Install llama.cpp, pass --llama <path>, or set LLAMA_SERVER." >&2

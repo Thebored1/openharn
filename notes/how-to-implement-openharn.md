@@ -3,7 +3,7 @@
 A from-scratch design for a tiny, local-first coding agent that makes **small**
 language models (0.8B–8B) usable on **CPU**. This is the intent behind the
 actual code in `src/`; read it before modifying the harness or adapting it to
-another domain (see `docs/adapting-openharn-myeelin.md`).
+another domain (see `docs/adapting-openharn.md`).
 
 ## Design thesis
 
@@ -144,10 +144,7 @@ Swap the **domain layer** only — state, tools, prompt — and keep the loop:
 3. Write `your_schemas()` (OpenAI function-calling JSON; descriptions matter).
 4. Write `YOUR_SYSTEM` (identity + tool contract + "no tool for chat" rule).
 5. Wire it: REPL (`tools::Session` → `YourSession`) or HTTP server (copy
-   `myelin.rs::server`).
-
-The Myelin branch (`myelin-tools`) is the worked example:
-`notes/myelin-implementation.md`.
+   the serve module).
 
 ## What the harness can't fix
 

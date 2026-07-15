@@ -3,7 +3,6 @@ mod edit;
 mod tools;
 mod slm_harness;
 mod serve;
-mod myelin;
 
 use serde_json::Value;
 use std::io::{self, Write};
@@ -39,7 +38,7 @@ fn main() {
     // OPENHARN_CONFIG=<path>, or let openharn auto-load configs/<model>.conf
     // when present. This is the output of tests/tune_model.sh — it removes the
     // need to retype the OPENHARN_* flags for a known-good model. Loaded first
-    // so every later std::env::var sees these values (including OPENHARN_MYELIN).
+    // so every later std::env::var sees these values.
     let mut config_path: Option<String> =
         std::env::var("OPENHARN_CONFIG").ok().filter(|s| !s.is_empty());
 
@@ -87,15 +86,6 @@ fn main() {
             Ok(()) => println!("[config] loaded {}", p),
             Err(e) => eprintln!("[config] {}", e),
         }
-    }
-
-    // Myelin HTTP server mode: OPENHARN_MYELIN=1 serves /v1/chat/completions on OPENHARN_MYELIN_PORT (default 8090)
-    if std::env::var_os("OPENHARN_MYELIN").is_some() {
-        let port = std::env::var("OPENHARN_MYELIN_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(8090);
-        return myelin::run_myelin_server(port);
     }
 
     // Config via env, defaulting to a local llama-server. For a cloud provider,
