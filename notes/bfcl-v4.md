@@ -31,41 +31,48 @@ isolation. See `src/serve.rs` and `agent::fc_proxy_once`.
 
 ## Results (200-entry subset, `--partial-eval`)
 
-| Category | A: raw native FC | B1: prompt-tools+strict | C: harness+gate | C − A |
-|---|---|---|---|---|
-| simple_python (40) | 32 (80.0%) | 14 (35.0%) | 24 (60.0%) | −20.0 |
-| multiple (40) | 33 (82.5%) | 4 (10.0%) | 18 (45.0%) | −37.5 |
-| parallel (40) | 0 (0.0%) | 2 (5.0%) | 1 (2.5%) | +2.5 |
-| parallel_multiple (40) | 0 (0.0%) | 2 (5.0%) | 10 (25.0%) | +25.0 |
-| irrelevance (40) | 30 (75.0%) | 37 (92.5%) | 35 (87.5%) | +12.5 |
-| **OVERALL** | **95/200 (47.5%)** | 59/200 (29.5%) | **88/200 (44.0%)** | **−3.5** |
+| Category | A: raw native FC | B1: prompt-tools+strict | C: harness+gate (ws bug) | **D: C + ws fix** | D − A |
+|---|---|---|---|---|---|
+| simple_python (40) | 32 (80.0%) | 14 (35.0%) | 24 (60.0%) | 30 (75.0%) | −5.0 |
+| multiple (40) | 33 (82.5%) | 4 (10.0%) | 18 (45.0%) | 23 (57.5%) | −25.0 |
+| parallel (40) | 0 (0.0%) | 2 (5.0%) | 1 (2.5%) | 9 (22.5%) | **+22.5** |
+| parallel_multiple (40) | 0 (0.0%) | 2 (5.0%) | 10 (25.0%) | 17 (42.5%) | **+42.5** |
+| irrelevance (40) | 30 (75.0%) | 37 (92.5%) | 35 (87.5%) | 35 (87.5%) | +12.5 |
+| **OVERALL** | **95/200 (47.5%)** | 59/200 (29.5%) | 88/200 (44.0%) | **114/200 (57.0%)** | **+9.5** |
 
-**C** = the best harness config: prompt-tools + strict grammar + abstention sentinel +
+**C/D** = the harness config: prompt-tools + strict grammar + abstention sentinel +
 relevance gate (`OPENHARN_FC_PROXY=1 OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1
-OPENHARN_STRICT_ABSTAIN=1 OPENHARN_FC_GATE=1`).
+OPENHARN_STRICT_ABSTAIN=1 OPENHARN_FC_GATE=1`). **D** additionally has the whitespace-bound
+grammar fix (below).
+
+> **The whitespace bug (C→D).** The strict grammar used `ws ::= [ \t\n\r]*` (unbounded
+> whitespace between tokens). On this weak model that backfires: after emitting a *valid*
+> first call object it spews whitespace to `max_tokens` and never closes the `]`, so the
+> array is unterminated and the parser recovers **nothing** — a correct call silently
+> discarded. Bounding to `ws ::= [ \t\n\r]?` forces a `,`/`]`. This alone moved the harness
+> from 44% to 57% (`parallel` 2.5→22.5, `parallel_multiple` 25→42.5). The bug was also
+> *stochastic*, which is why it drove run-to-run variance.
 
 > **Run-to-run noise.** At temperature 0.001 with 4 parallel `llama-server` slots on CPU,
-> generation is not bit-deterministic: two gate runs landed at **44.0%** and **46.5%**
-> overall (per-category swings up to ~10 points on the 40-entry categories). So **C and A
-> are within noise** — treat the aggregate as a tie, and read the per-category deltas as
-> directional, not exact.
+> generation is not bit-deterministic. Two **D** runs landed at **57.0%** and **53.0%**
+> (parallel especially swings, being a small noisy category); the ws fix reduced the
+> variance (by killing the runaway) but didn't remove it. Treat D as **~53–57%**.
 
 ### The honest headline
 
-On this model, **no single harness config beats raw native FC overall** (44–46.5% vs
-47.5% — a tie within noise).
-The harness *redistributes* errors rather than net-reducing them: it **fixes the two
-categories native FC scores 0% on** (`parallel_multiple` 0→25%, `parallel` 0→~5%) and
-**improves abstention** (`irrelevance` 75→87.5%), but forcing calls through openharn's
-text-grammar produces **less accurate arguments than the model's native tool-calling**, so
-`simple`/`multiple` regress and the aggregate lands flat.
+**After fixing the whitespace bug, the harness beats raw native FC by ~5–9 points**
+(D: 53–57% vs A: 47.5%). The win comes entirely from the two categories native FC
+*structurally cannot* do — `parallel` and `parallel_multiple` (native returns a single
+call; the harness's JSON **array** expresses N) — plus better abstention on `irrelevance`.
+It is *not* free: forcing calls through the text-grammar still fills arguments a bit less
+accurately than native FC, so `simple`/`multiple` sit slightly below raw.
 
-This *refines* openharn's thesis honestly. "The harness matters more than the model" is
-strongest when native tool-calling is **broken or absent** (the original premise — bitnet.cpp,
-old forks, models that emit descriptive text). On current `llama.cpp`, this Q2 model's
-native FC already works, so the harness's value narrows to what native FC *cannot* do —
-express multiple calls in one turn, and gate abstention — while it should otherwise defer
-to native FC for argument accuracy.
+This is openharn's thesis landing as stated: **a good harness makes a small model do
+things its native tool-calling can't.** The caveat is honest — the harness's edge is on
+multi-call and abstention; for plain single calls, this model's native FC is already good,
+so the gains there are small or negative. (Note the earlier "net flat" conclusion was
+mostly an artifact of the whitespace bug silently eating valid calls — worth remembering
+how much a single grammar `*` vs `?` moved the whole result.)
 
 ### The path there (each step a model-agnostic change)
 
@@ -74,11 +81,11 @@ to native FC for argument accuracy.
 | raw native FC | 47.5% | baseline |
 | prompt-tools + strict (B1) | 29.5% | model escapes into **prose** (`decoder_failed`) instead of calling |
 | + abstention sentinel | (mini) simple 35→100% | grammar forbids prose → `call` or `NO_TOOL`; but over-calls on irrelevance |
-| + relevance gate (C) | 44–46.5% | YES/NO pre-pass restores abstention (irrelevance 87.5%); parallel_multiple fixed |
+| + relevance gate (C) | 44–46.5% | YES/NO pre-pass restores abstention (irrelevance 87.5%) |
+| + bounded-whitespace grammar (D) | **53–57%** | stops the runaway that dropped valid calls; parallel 2.5→22.5, parallel_multiple 25→42.5 |
 
 (The intermediate steps were tuned on an 8/cat mini-set; the 8-entry categories are noisy,
-which is why the mini-set favoured the gate by +5 but the full 200 lands flat. Real numbers,
-not the rosy small-sample ones.)
+which is why the mini-set was noisy. Real numbers, not the rosy small-sample ones.)
 
 ## Why the raw baseline fails (from the result files)
 
@@ -99,7 +106,7 @@ Three new, model-agnostic tool-call knobs (all derived from the request's tools)
 1. **Multi-call array** (always on in prompt-tools). openharn's format is a JSON array, so
    several calls fit in one reply. On `parallel_0` the harness returns BOTH
    `spotify_play(Taylor Swift, 20)` and `spotify_play(Maroon 5, 15)` — the exact ground
-   truth — where native FC returned one. This is the whole `parallel_multiple` 0→25% gain.
+   truth — where native FC returned one. This is most of the `parallel_multiple` 0→~42% gain (once the whitespace fix stops the array being dropped).
 2. **Abstention grammar** (`OPENHARN_STRICT_ABSTAIN`): `root ::= call | "NO_TOOL"` — the
    model may not emit free prose, only a valid call array or a literal abstention. This
    removes the "solve it in prose instead of calling" failure.
@@ -132,6 +139,10 @@ All derive from `schemas()`/the request's tools, so they help any model on any s
   can recover) → plain text may no longer start with `[`/`{`/`<`, forcing JSON-looking
   output through the closed, schema-valid `call` branch; the `<tool_call>` marker is now
   optional so a bare `[{…}]` array is accepted too. (`agent.rs::tool_grammar`)
+- **Unbounded whitespace let weak models run away** (`ws ::= [ \t\n\r]*`): after a valid
+  first call the model emitted whitespace to `max_tokens` and never closed the `]`, so the
+  array was unterminated and the call silently lost -> now `ws ::= [ \t\n\r]?`. Biggest
+  single lever here (44->57%). (`agent.rs` GRAMMAR_TAIL)
 - **BFCL registration:** `underscore_to_dot=True` — BFCL sanitizes dotted function names
   to underscores for the OpenAI FC schema, so the checker must map them back (without it,
   correct calls score as `wrong_func_name`). (`tests/bfcl/register_models.py`)
@@ -143,16 +154,12 @@ relevance pre-pass). Documented in [`docs/adapting-openharn.md`](../docs/adaptin
 
 ## Takeaway
 
-- **Best single config for this model on this subset: raw native FC.** When native
-  tool-calling works, defer to it — the harness's forced-call grammar costs argument
-  accuracy.
-- **The harness earns its keep on native FC's blind spots:** multi-call/parallel (`parallel_multiple` 0→25%
+- **Best config on this subset: the openharn harness (gate + bounded-ws grammar), ~53–57% vs raw 47.5%.** The win is entirely on multi-call categories native FC can't do.
+- **The harness earns its keep on native FC's blind spots:** multi-call/parallel (`parallel_multiple` 0→~42%
   on `parallel_multiple`) and abstention gating. Reach for prompt-tools + strict + abstain
   + gate when native FC is weak/absent (the original openharn premise) or specifically for
   those categories.
-- **Aggregate score is a wash here (44–46.5% vs 47.5%, within run-to-run noise)** because the subset weights parallel
-  (native's 0%) and simple/multiple (native's strength) equally; the right config depends
-  on the actual task mix.
+- **The harness wins by fixing what native FC structurally can't** (parallel: 0→~20%, parallel_multiple: 0→~42%). For plain single calls native FC is already strong, so simple/multiple stay slightly below raw — the net still favours the harness on this subset.
 - A cheap CPU model at 2-bit clears ~47% of a BFCL v4 single-turn subset at all — most of
   the remaining gap is *judgment* (decomposition, tool choice, abstention), which no
   harness supplies.
