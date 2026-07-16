@@ -1157,6 +1157,26 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let strict = std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
     let prompt_tools = strict || std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
     let abstain = std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some();
+
+    // Native-template strict mode (OPENHARN_NATIVE_TEMPLATE=1): render the model's OWN
+    // chat template (tools included) via the server's /apply-template, let a thinking
+    // model finish its think block unconstrained, then grammar-force the call. This fixes
+    // the two ways plain modes fail on a model whose native FC *format* degrades (e.g.
+    // under heavy quantization it mangles its own call syntax) without retraining the
+    // model on openharn's text protocol:
+    //   - prompt-tools flattening loses the native tool presentation the model was
+    //     trained on (some models emit nothing on a text-only prompt);
+    //   - llama-server rejects `tools` + `grammar` in one request, so the grammar can't
+    //     ride on a native chat/completions call.
+    // Fully model-agnostic: the tool prompt comes from the model's template, the think
+    // tag is detected from the template's rendered tail, and the grammar derives from
+    // the request's tools. Falls back to the standard path if /apply-template is absent.
+    if std::env::var_os("OPENHARN_NATIVE_TEMPLATE").is_some() {
+        if let Some(out) = fc_native_template(cfg, messages, tools) {
+            return out;
+        }
+        eprintln!("[fc_proxy] /apply-template unavailable; falling back to standard path");
+    }
     // Relevance gate (OPENHARN_FC_GATE): a YES/NO pre-pass decides call-vs-abstain, then
     // the generation is FORCED to a valid call when a tool applies. Separating the "should
     // I call" judgment from the "emit a valid call" mechanics lets the harness force calls
@@ -1206,9 +1226,29 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
             body["grammar"] = json!(tool_grammar(tools, grammar_root));
         }
     } else {
-        // native tool-calling: hand the schemas straight to the server
+        // Native tool-calling: hand the schemas straight to the server.
+        // OPENHARN_TOOL_CHOICE=required makes the server grammar-force a well-formed call
+        // in the model's OWN native format — llama.cpp builds that grammar from the
+        // model's chat template. This is the strict-grammar idea without the format
+        // transplant: the model keeps its native (multi-call-capable) call syntax but
+        // physically cannot emit a malformed one. The fix of choice for a model whose
+        // native FC works but degrades (e.g. mangled call syntax under heavy
+        // quantization). Model-agnostic: the grammar derives from the model's template.
         body["tools"] = tools.clone();
-        body["tool_choice"] = json!("auto");
+        let choice =
+            std::env::var("OPENHARN_TOOL_CHOICE").unwrap_or_else(|_| "auto".to_string());
+        body["tool_choice"] = json!(choice);
+    }
+    // OPENHARN_TEMPLATE_KWARGS: raw JSON forwarded as `chat_template_kwargs` (a llama.cpp
+    // passthrough into the model's own chat template). The canonical use is
+    // '{"enable_thinking":false}' — templates that support the switch render a CLOSED
+    // think block so generation starts at the answer/call; templates that don't simply
+    // ignore it. Pairs with OPENHARN_TOOL_CHOICE=required: a thinking model otherwise
+    // burns its budget reasoning under the forced call grammar and returns nothing.
+    if let Ok(kw) = std::env::var("OPENHARN_TEMPLATE_KWARGS") {
+        if let Ok(v) = serde_json::from_str::<Value>(&kw) {
+            body["chat_template_kwargs"] = v;
+        }
     }
 
     let mut req = client.post(&url).json(&body);
@@ -1238,6 +1278,113 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     pt_total += usage["prompt_tokens"].as_u64().unwrap_or(0);
     ct_total += usage["completion_tokens"].as_u64().unwrap_or(0);
     (tool_calls, content, pt_total, ct_total)
+}
+
+/// Native-template strict generation for the FC-proxy (OPENHARN_NATIVE_TEMPLATE=1).
+///
+/// 1. `POST /apply-template` — the server renders the model's own chat template with the
+///    request's messages AND tools, so the model sees tools exactly as it was trained to.
+/// 2. If the rendered prompt ends with an open `<tag>` (thinking models: `<think>`,
+///    `<reasoning>`, …) run one UNconstrained `/completion` with `stop: ["</tag>"]` so the
+///    model reasons freely, then close the tag. Budget: OPENHARN_THINK_BUDGET (default 900).
+/// 3. Run the grammar-constrained `/completion` (root=call) and recover the calls from the
+///    text — the grammar guarantees a well-formed `<tool_call>[{…}]` array, which is what
+///    rescues a model whose native call syntax degrades (it can't emit malformed output).
+///
+/// Returns None when the server has no /apply-template (non-llama.cpp endpoints), letting
+/// the caller fall back to the standard prompt-tools path.
+fn fc_native_template(
+    cfg: &Config,
+    messages: &[Value],
+    tools: &Value,
+) -> Option<(Vec<Value>, String, u64, u64)> {
+    let client = reqwest::blocking::Client::new();
+    // /apply-template and /completion live at the server root, not under /v1.
+    let root = {
+        let b = cfg.base_url.trim_end_matches('/');
+        b.strip_suffix("/v1").unwrap_or(b).to_string()
+    };
+    let (mut pt, mut ct) = (0u64, 0u64);
+
+    // 1. render the model's own template (native tool presentation)
+    let resp = client
+        .post(format!("{root}/apply-template"))
+        .json(&json!({ "messages": messages, "tools": tools }))
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: Value = resp.json().ok()?;
+    let mut prompt = v["prompt"].as_str()?.to_string();
+
+    // 2. thinking phase — detected from the template itself, not the model name
+    if let Some(tag) = trailing_open_tag(&prompt) {
+        let think_budget: u64 = std::env::var("OPENHARN_THINK_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(900);
+        let body = json!({
+            "prompt": prompt,
+            "stop": [format!("</{tag}>")],
+            "n_predict": think_budget,
+            "temperature": cfg.temperature,
+        });
+        if let Some(rv) = client
+            .post(format!("{root}/completion"))
+            .json(&body)
+            .send()
+            .ok()
+            .and_then(|r| r.json::<Value>().ok())
+        {
+            let think = rv["content"].as_str().unwrap_or("");
+            pt += rv["tokens_evaluated"].as_u64().unwrap_or(0);
+            ct += rv["tokens_predicted"].as_u64().unwrap_or(0);
+            prompt.push_str(think);
+            prompt.push_str(&format!("</{tag}>\n"));
+        }
+    }
+
+    // 3. grammar-constrained call
+    let body = json!({
+        "prompt": prompt,
+        "grammar": tool_grammar(tools, "call"),
+        "n_predict": cfg.max_tokens,
+        "temperature": cfg.temperature,
+    });
+    let rv: Value = client
+        .post(format!("{root}/completion"))
+        .json(&body)
+        .send()
+        .ok()?
+        .json()
+        .ok()?;
+    let content = rv["content"].as_str().unwrap_or("").to_string();
+    pt += rv["tokens_evaluated"].as_u64().unwrap_or(0);
+    ct += rv["tokens_predicted"].as_u64().unwrap_or(0);
+
+    match parse_text_tool_calls(&content) {
+        Some(calls) => Some((calls, String::new(), pt, ct)),
+        None => Some((vec![], content, pt, ct)),
+    }
+}
+
+/// If the prompt's trimmed tail is an OPENING tag like `<think>` / `<reasoning>` (a bare
+/// alphanumeric/underscore name — so `</think>` and special tokens like `<|im_start|>`
+/// don't match), return the tag name. This is how a thinking model's template announces
+/// "reason first": the render ends mid-think, and the caller must let the model close it.
+fn trailing_open_tag(s: &str) -> Option<String> {
+    let t = s.trim_end();
+    if !t.ends_with('>') {
+        return None;
+    }
+    let open = t.rfind('<')?;
+    let inner = &t[open + 1..t.len() - 1];
+    if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Some(inner.to_string())
+    } else {
+        None
+    }
 }
 
 /// YES/NO relevance pre-pass for the FC-proxy gate. Asks whether ANY provided tool should

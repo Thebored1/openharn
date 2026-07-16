@@ -347,6 +347,92 @@ win/loss was actually a grammar quantifier.
 - **Process lesson**: a permissive grammar `*` and an 8-entry mini-set each nearly wrote a
   wrong conclusion. Real numbers, full subset, and trace the `null`s.
 
+---
+
+## Follow-up: cross-model — the config is model-specific, and the wrong one is catastrophic
+
+Same `parallel_multiple` ×40 subset, same CPU box, raw vs the LFM2-winning harness config
+(D: prompt-tools + strict + abstain + gate):
+
+| Model | Raw native FC | Harness (D) | What happens |
+|---|---|---|---|
+| LFM2-8B-A1B Q2_K_XL | 0.0% | ~42.5% | weak native → harness rescues |
+| LFM2-8B-A1B Q4_K_M | 0.0% | 22.5% | weak native → harness rescues |
+| MiniCPM-V-4.6 Q8_0 | 72.5–85% | 0.0% | strong native → **harness breaks it** |
+| Qwen3.5-0.8B Q8 | 70.0% | 0.0% | strong native → **harness breaks it** |
+| LFM2.5-8B-APEX-Compact | — | — | reasoning tax: 4k+ think tokens, never reaches a call on CPU |
+
+Both "breaks it" cases returned **40/40 empty**, by two different mechanisms: MiniCPM-V
+emits nothing on a text-only (prompt-tools-flattened) prompt, and Qwen/MiniCPM are
+**thinking models** whose templates open a `<think>` block that the strict grammar forbids
+— the model literally cannot emit its first token. (This also retroactively explains the
+gate returning empty on those models.) `PROMPT_TOOLS`/`STRICT` are a crutch for models that
+*can't* do native FC; applied to one that can, they're not merely suboptimal — they zero it.
+
+Side result: **Qwen3.5-0.8B hits 70% raw** on parallel_multiple — far above the old
+"below the floor" verdict from the behavioral suite ([`small-model-tool-calling.md`](small-model-tool-calling.md));
+that verdict was about openharn's coding-agent tasks, not FC capability.
+
+Quant check on the good model (raw native FC, 3 runs each): **Q8_0 = 77.5/85/85 (~82.5%)**
+vs **Q4_0 = 40/42.5/47.5 (~43%)** — a ~40-point cliff, distributions non-overlapping. Note
+`Q4_0` is the *legacy uniform* quant; this is a much bigger gap than the LFM2 UD-Q2-vs-Q4_K_M
+pair, where two *smart* quants measured the same within noise.
+
+## Follow-up: rescuing MiniCPM-Q4_0 with the harness (the quant-degradation experiment)
+
+Question: Q4_0 halves MiniCPM's tool-calling (82.5→43%). Can the harness recover it,
+model-agnostically? Failure diff (Q8-passed ∩ Q4-failed, 18 entries) showed quantization
+broke two things — **format motor control** (9× `decoder_failed`: Q4 mangles its own
+`<tool_call><function=…>` XML syntax) and **decomposition** (11× `wrong_count`: one call
+where N needed). Judgment was mostly intact.
+
+The path there — two instructive dead ends before the fix (all ×3 runs, 16k-ctx server):
+
+| Config | Runs | Mean | Broken leg |
+|---|---|---|---|
+| raw `tool_choice=auto` (thinking) | 45/50/47.5 | 47.5% | mangles native XML on ~25% of entries |
+| **dead end 1:** custom native-template + openharn JSON grammar | 22.5/30/30 | 27.5% | format fixed, but the *foreign* array format suppresses the model's multi-call habit — it closes the array after one item; a decomposition system-nudge did nothing |
+| **dead end 2:** `tool_choice=required` (thinking) | 27.5/40/45 | 37.5% | native grammar fixes format AND keeps multi-call, but the forced grammar × think phase kills entries that reason long → 13–23/40 **empty** |
+| **fix:** `required` + `enable_thinking:false` | **72.5/72.5/72.5** | **72.5%** | none — format forced, multi-call intact, no think-budget deaths |
+
+**Result: 47.5% → 72.5%, recovering ~71% of the quant gap (Q8 raw ≈ 82.5%), with zero
+run-to-run variance and ~4× faster generation.** The residual 27.5% is genuine judgment
+(e.g. one `get_rectangle_property(property="length, width")` call where ground truth wants
+two calls).
+
+Mechanics worth recording:
+
+- **llama-server rejects `tools` + custom `grammar` in one request** ("Cannot use custom
+  grammar constraints with tools") — you cannot bolt openharn's GBNF onto a native FC call.
+  `tool_choice=required` is the sanctioned route: the server grammar-forces the model's
+  OWN template-derived format. Same GBNF idea, right target format.
+- **The think-tag discovery:** `/apply-template` shows MiniCPM-V-4.6's template ends the
+  assistant turn with an open `<think>\n` — it's a thinking model. Any grammar applied from
+  token 0 (strict mode, the YES/NO gate, `required`) collides with that. The generic
+  escape hatches: complete the think block unconstrained first (the `OPENHARN_NATIVE_TEMPLATE`
+  machinery detects the open tag from the template's own rendering), or switch thinking off
+  via the template's own switch (`chat_template_kwargs: {"enable_thinking": false}` — no-op
+  where unsupported).
+- **New knobs** (all model-agnostic; `docs/adapting-openharn.md`): `OPENHARN_TOOL_CHOICE`
+  (forward `required`), `OPENHARN_TEMPLATE_KWARGS` (raw `chat_template_kwargs` passthrough),
+  `OPENHARN_NATIVE_TEMPLATE` (apply-template + think-phase + array grammar; kept as the
+  fallback for servers/models where native FC is absent — with its multi-call caveat
+  documented).
+- **Slot-context trap:** `--ctx-size 8192` with 4 auto-slots = 2048/slot; MiniCPM's ~1400-token
+  tool prompt + thinking overflows it and silently truncates mid-think (returns nothing under
+  `required`). The 16k/`--parallel 4` re-baseline also lifted *raw* Q4 from ~43 to 47.5%.
+- **Spot checks lie, again:** `required` fixed 3 of 4 hand-picked entries, then lost to raw
+  on the full 40 (37.5 vs 47.5) until no-think landed. Full-subset × 3 runs or it didn't happen.
+
+The refined per-model decision tree, one experiment later:
+
+```
+native FC absent/broken   → prompt-tools + strict (+abstain/gate)     [LFM2-Q2: 0 → ~42%]
+native FC works, degraded → native + tool_choice=required (+no-think) [MiniCPM-Q4: 47.5 → 72.5%]
+native FC works, healthy  → leave it alone (harness only for gaps)    [MiniCPM-Q8, Qwen-0.8B]
+reasoning tax dominates   → enable_thinking:false first, then decide  [APEX-Compact]
+```
+
 ## Reproduce
 
 [`tests/bfcl/README.md`](../tests/bfcl/README.md) — exact `bfcl generate/evaluate` commands,

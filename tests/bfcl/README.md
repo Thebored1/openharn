@@ -73,6 +73,27 @@ full-category number). `underscore_to_dot=True` in the registration is required 
 BFCL's dotted function names (sanitized to underscores for the OpenAI FC schema) are
 mapped back during checking.
 
+## Quant-degraded native FC (e.g. MiniCPM-V Q4_0): native + required + no-think
+
+For a model whose native FC *works but degrades under quantization* (mangles its own call
+syntax), don't use prompt-tools — force the model's OWN format via the server and switch
+thinking off (see the quant-rescue section in [`notes/bfcl-v4.md`](../../notes/bfcl-v4.md);
+MiniCPM-V-4.6 Q4_0: 47.5% → 72.5% on `parallel_multiple`):
+
+```sh
+# server with enough per-slot context for tool prompts + generation:
+llama-server -m MiniCPM-V-4_6-Q4_0.gguf --jinja --ctx-size 16384 --parallel 4 -ngl 0
+
+OPENHARN_BASE_URL=http://127.0.0.1:8080/v1 OPENHARN_SERVE=1 OPENHARN_SERVE_PORT=8090 \
+OPENHARN_FC_PROXY=1 OPENHARN_TOOL_CHOICE=required \
+OPENHARN_TEMPLATE_KWARGS='{"enable_thinking":false}' \
+OPENHARN_MAX_TOKENS=1024 ./target/debug/openharn . &
+```
+
+`required` forces a call (llama.cpp grammar in the model's native format) — pair it with
+the gate on abstention workloads. `enable_thinking:false` is a no-op on templates without
+the switch.
+
 ## Agentic / multi-turn (`multi_turn_*`, `memory_*`, `web_search_*`)
 
 These run through the same FC-proxy, but **drop `OPENHARN_FC_GATE`** — the relevance gate
