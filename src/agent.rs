@@ -979,7 +979,7 @@ string ::= "\"" ( [^"\\\n\r] | "\\" ["\\/bfnrt] )* "\""
 number ::= "-"? [0-9]+ ( "." [0-9]+ )?
 integer ::= "-"? [0-9]+
 boolean ::= "true" | "false"
-ws ::= [ \t\n\r]*
+ws ::= [ \t\n\r]?
 "#;
 
 /// The GBNF grammar for a single argument value, tightened by JSON-schema type/enum where
