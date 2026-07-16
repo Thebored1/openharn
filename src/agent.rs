@@ -296,7 +296,12 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         } else if prompt_tools {
             // grammar-constrain the output to a schema-valid tool call (or plain text)
             if strict {
-                body["grammar"] = json!(tool_grammar(&effective_schemas));
+                let root = if std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some() {
+                    "abstain"
+                } else {
+                    "text"
+                };
+                body["grammar"] = json!(tool_grammar(&effective_schemas, root));
             }
         } else {
             body["tools"] = effective_schemas.clone();
@@ -989,7 +994,8 @@ fn value_rule_for(spec: &Value) -> String {
     }
     match spec["type"].as_str().unwrap_or("") {
         "string" => "string".into(),
-        "integer" | "number" => "integer".into(),
+        "integer" => "integer".into(),
+        "number" => "number".into(),
         "boolean" => "boolean".into(),
         _ => "value".into(),
     }
@@ -999,18 +1005,51 @@ fn value_rule_for(spec: &Value) -> String {
 /// tool call — `<tool_call>[{"name": <known tool>, "arguments": {<only known keys, typed>}}]`
 /// — OR plain text (any reply not starting with `<`). Used in strict/narrow modes so a
 /// weak model physically cannot invent a field name, misname a tool, or malform a call.
-fn tool_grammar(schemas: &Value) -> String {
+fn tool_grammar(schemas: &Value, root: &str) -> String {
     let lit = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
-    // GBNF rule names must be dashed-lowercase (e.g. "check-mate"). Tool names
-    // like glob_system contain underscores; replace them with dashes so the
-    // grammar parser accepts the rule names.
-    let rn = |s: &str| s.replace('_', "-");
+    // GBNF rule names must be alphanumeric/dash (e.g. "check-mate"). Tool names may
+    // contain underscores (glob_system) or, for external schemas like BFCL, dots
+    // (math.factorial) and other punctuation; map every non-alphanumeric char to '-'
+    // so any tool name yields a valid rule name.
+    let rn = |s: &str| {
+        s.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+    };
     let mut g = String::new();
-    // root: either a tool call or plain text (text = anything not starting with <)
-    g.push_str("root ::= call | text\n");
-    g.push_str("text ::= [^<] | [^<] text\n");
+    // root: either a tool call or plain text. Plain text may NOT start with `<`, `[`
+    // or `{` — so the moment the model commits to JSON-looking output it is forced down
+    // the `call` branch (which enforces a closed, schema-valid array) instead of leaking
+    // an unterminated `[{…}` as free text that no parser can recover. The `<tool_call>`
+    // marker is optional: many models emit the bare `[{"name":…}]` array, and openharn's
+    // text-call recovery accepts either form.
+    // Abstention mode (OPENHARN_STRICT_ABSTAIN): forbid free-form prose entirely — the
+    // model may ONLY emit a schema-valid tool-call array or the literal `NO_TOOL`. This
+    // removes the "helpfully compute/answer the request in prose instead of calling the
+    // tool" failure (the dominant one on a benchmark like BFCL) while still allowing a
+    // deliberate abstention when no tool fits. Otherwise, plain text is allowed but may
+    // not START with `<`/`[`/`{`, so JSON-looking output is forced through the closed
+    // `call` branch instead of leaking an unterminated array as text.
+    // `root` selects what the model is allowed to emit:
+    //   "call"    — a tool-call array ONLY (used after a relevance gate said "call")
+    //   "abstain" — a tool-call array or the literal `NO_TOOL` (no free prose)
+    //   otherwise — a tool-call array or plain text (default)
+    match root {
+        "call" => {
+            g.push_str("root ::= call\n");
+        }
+        "abstain" => {
+            g.push_str("root ::= call | abstain\n");
+            g.push_str("abstain ::= \"NO_TOOL\"\n");
+        }
+        _ => {
+            g.push_str("root ::= call | text\n");
+            g.push_str("text ::= [^<[{] | [^<[{] textrest\n");
+            g.push_str("textrest ::= [^<] | [^<] textrest\n");
+        }
+    }
     g.push_str(&format!(
-        "call ::= {} ws {} ws obj ( ws {} ws obj )* ws {}\n",
+        "call ::= ( {} ws )? {} ws obj ( ws {} ws obj )* ws {}\n",
         lit("<tool_call>"), lit("["), lit(","), lit("]")
     ));
     let mut obj_alts: Vec<String> = Vec::new();
@@ -1064,10 +1103,20 @@ fn tool_grammar(schemas: &Value) -> String {
 /// the model should emit (what `parse_text_tool_calls` recovers). Used when the server
 /// has no native tool-calling.
 fn tool_prompt(schemas: &Value) -> String {
-    let mut s = String::from(
-        "You do NOT have a tool API. To call a tool, reply with ONLY this line and nothing else:\n\
-         <tool_call>[{\"name\": \"<tool>\", \"arguments\": { ... }}]\n\
-         Otherwise, answer the user normally. Available tools:\n",
+    // The abstention clause differs by mode: with OPENHARN_STRICT_ABSTAIN the grammar
+    // forbids free prose, so "no tool fits" must be the literal NO_TOOL sentinel;
+    // otherwise the model just answers normally.
+    let no_tool_clause = if std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some() {
+        "If NO available tool fits the request, reply with exactly: NO_TOOL (and nothing else)."
+    } else {
+        "Otherwise, answer the user normally."
+    };
+    let mut s = format!(
+        "You do NOT have a tool API. To call tools, reply with ONLY a tool-call line and nothing else:\n\
+         <tool_call>[{{\"name\": \"<tool>\", \"arguments\": {{ ... }}}}]\n\
+         Put SEVERAL objects in the array to call multiple tools in one reply (one object per call).\n\
+         Prefer calling an available tool over answering the request from your own knowledge. \
+         {no_tool_clause} Available tools:\n"
     );
     if let Some(arr) = schemas.as_array() {
         for t in arr {
@@ -1092,6 +1141,163 @@ fn tool_prompt(schemas: &Value) -> String {
         }
     }
     s
+}
+
+/// Single-shot function-calling proxy for `--serve` FC mode. Given the caller's
+/// messages and OpenAI tool schemas, run ONE constrained generation — openharn's
+/// prompt-tools description + strict GBNF grammar (or native `tools` when neither is
+/// set) — and return the recovered tool_calls, any leftover text, and token usage.
+///
+/// No agent loop, no tool execution: this exposes openharn's tool-call *reliability*
+/// layer to an external function-calling client (e.g. the BFCL benchmark), so the
+/// harness's contribution can be measured in isolation. Fully model- and
+/// schema-agnostic — the grammar and description are derived from `tools`, whatever
+/// they are.
+pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Value>, String, u64, u64) {
+    let strict = std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
+    let prompt_tools = strict || std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
+    let abstain = std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some();
+    // Relevance gate (OPENHARN_FC_GATE): a YES/NO pre-pass decides call-vs-abstain, then
+    // the generation is FORCED to a valid call when a tool applies. Separating the "should
+    // I call" judgment from the "emit a valid call" mechanics lets the harness force calls
+    // on relevant inputs (fixing prose-instead-of-call / parallel under-calling) without
+    // over-calling on irrelevant ones. Needs strict grammar to force the call.
+    let gate = strict && std::env::var_os("OPENHARN_FC_GATE").is_some();
+
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    let (mut pt_total, mut ct_total) = (0u64, 0u64);
+
+    // Pass 1: relevance gate. If it says no tool applies, abstain immediately.
+    let mut grammar_root = if abstain { "abstain" } else { "text" };
+    if gate {
+        let (relevant, gpt, gct) = relevance_gate(&client, &url, cfg, messages, tools);
+        pt_total += gpt;
+        ct_total += gct;
+        if !relevant {
+            return (vec![], "NO_TOOL".to_string(), pt_total, ct_total);
+        }
+        grammar_root = "call"; // a tool applies → force a schema-valid call
+    }
+
+    // Pass 2: the actual (constrained) tool-call generation.
+    // prompt-tools carries the tool description in the system message; make sure one
+    // exists to carry it (FC datasets often send only a user turn).
+    let mut msgs: Vec<Value> = messages.to_vec();
+    if prompt_tools && !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
+        msgs.insert(0, json!({ "role": "system", "content": "" }));
+    }
+    let wire = if prompt_tools {
+        flatten_for_prompt_tools(&msgs, tools)
+    } else {
+        msgs
+    };
+
+    let mut body = json!({
+        "model": cfg.model,
+        "messages": wire,
+        "temperature": cfg.temperature,
+        "max_tokens": cfg.max_tokens,
+        "stream": false,
+    });
+    if prompt_tools {
+        // grammar-force a schema-valid <tool_call> when strict
+        if strict {
+            body["grammar"] = json!(tool_grammar(tools, grammar_root));
+        }
+    } else {
+        // native tool-calling: hand the schemas straight to the server
+        body["tools"] = tools.clone();
+        body["tool_choice"] = json!("auto");
+    }
+
+    let mut req = client.post(&url).json(&body);
+    if let Some(k) = &cfg.api_key {
+        req = req.bearer_auth(k);
+    }
+    let v: Value = match req.send().and_then(|r| r.json()) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[fc_proxy] request/parse failed: {e}");
+            return (vec![], String::new(), pt_total, ct_total);
+        }
+    };
+
+    let msg = &v["choices"][0]["message"];
+    let mut content = msg["content"].as_str().unwrap_or("").to_string();
+    // Prefer the server's own parsed tool_calls; otherwise recover a text-emitted call
+    // (the strict-grammar path emits `<tool_call>[{…}]` as text).
+    let mut tool_calls: Vec<Value> = msg["tool_calls"].as_array().cloned().unwrap_or_default();
+    if tool_calls.is_empty() {
+        if let Some(parsed) = parse_text_tool_calls(&content) {
+            tool_calls = parsed;
+            content.clear();
+        }
+    }
+    let usage = &v["usage"];
+    pt_total += usage["prompt_tokens"].as_u64().unwrap_or(0);
+    ct_total += usage["completion_tokens"].as_u64().unwrap_or(0);
+    (tool_calls, content, pt_total, ct_total)
+}
+
+/// YES/NO relevance pre-pass for the FC-proxy gate. Asks whether ANY provided tool should
+/// be called for this request, grammar-constrained to `YES`|`NO`. Returns `(relevant,
+/// prompt_tokens, completion_tokens)`. Fails open (assume relevant) on any transport error
+/// so a blip never silently drops a needed call. Model- and schema-agnostic — the tool
+/// list is rendered from `tools`.
+fn relevance_gate(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    cfg: &Config,
+    messages: &[Value],
+    tools: &Value,
+) -> (bool, u64, u64) {
+    let mut desc = String::new();
+    if let Some(arr) = tools.as_array() {
+        for t in arr {
+            let f = &t["function"];
+            let name = f["name"].as_str().unwrap_or("");
+            let d = f["description"].as_str().unwrap_or("");
+            let short = d.split(['.', '\n']).next().unwrap_or(d);
+            desc.push_str(&format!("- {name}: {short}\n"));
+        }
+    }
+    let sys = format!(
+        "Decide if ANY of these tools should be called to satisfy the user's request.\n\
+         Tools:\n{desc}Reply with exactly YES (a tool applies) or NO (none apply). Nothing else."
+    );
+    let mut wire: Vec<Value> = vec![json!({ "role": "system", "content": sys })];
+    for m in messages {
+        if m["role"].as_str() != Some("system") {
+            wire.push(m.clone());
+        }
+    }
+    let body = json!({
+        "model": cfg.model,
+        "messages": wire,
+        "temperature": 0.0,
+        "max_tokens": 4,
+        "stream": false,
+        "grammar": "root ::= \"YES\" | \"NO\"\n",
+    });
+    let mut req = client.post(url).json(&body);
+    if let Some(k) = &cfg.api_key {
+        req = req.bearer_auth(k);
+    }
+    let v: Value = match req.send().and_then(|r| r.json()) {
+        Ok(v) => v,
+        Err(_) => return (true, 0, 0), // fail open: treat as relevant
+    };
+    let ans = v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_uppercase();
+    let usage = &v["usage"];
+    let pt = usage["prompt_tokens"].as_u64().unwrap_or(0);
+    let ct = usage["completion_tokens"].as_u64().unwrap_or(0);
+    // Relevant unless the model clearly said NO.
+    (!ans.starts_with("NO"), pt, ct)
 }
 
 /// Render internal `tool_calls` back into the text form the model is told to emit, so a

@@ -39,6 +39,9 @@ No rebuild needed. Set these before launching openharn.
 | `OPENHARN_NO_THINK` | suppress a reasoning model's thinking (faster on CPU) | LFM2.5 is too slow |
 | `OPENHARN_SHOW_THINKING` | stream the raw chain-of-thought instead of the meter | debugging what the model thought |
 | `OPENHARN_FRIENDLY_RESULTS` | arm intent detection: classify the user turn as `CHAT` or `TOOL` *before* the tool loop; a `CHAT` turn skips tools and answers directly | model fires tools on greetings / small talk ("hello" → `todowrite`) |
+| `OPENHARN_STRICT_ABSTAIN` | (strict only) forbid free-form prose in the grammar: the model may emit ONLY a schema-valid tool-call array or the literal `NO_TOOL` | model "helpfully" answers/computes the request in prose instead of calling the tool |
+| `OPENHARN_FC_PROXY` | in `--serve`, when a request carries `tools`, do ONE constrained tool-call generation and return the `tool_calls` (no agent loop). Lets an external function-calling client/benchmark drive openharn's tool-call layer | benchmarking or proxying the harness's tool-call reliability (see BFCL v4, `notes/bfcl-v4.md`) |
+| `OPENHARN_FC_GATE` | (FC-proxy, strict) two-pass: a YES/NO relevance pre-pass decides call-vs-abstain, then a call is FORCED when a tool applies | separate the *should-I-call* judgment from the *emit-a-valid-call* mechanics — forces calls on relevant inputs without over-calling on irrelevant ones |
 
 `NARROW` implies `STRICT_TOOLS`; `STRICT_TOOLS` implies `PROMPT_TOOLS` (a grammar can't
 combine with the native `tools` field). `NO_THINK` is ignored under strict (its prefill

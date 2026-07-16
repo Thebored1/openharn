@@ -112,6 +112,41 @@ fn handle_chat(mut request: Request, cfg: Config, cwd: PathBuf) {
         local_cfg.max_tokens = m as u32;
     }
 
+    // FC-proxy mode (OPENHARN_FC_PROXY=1): if the request carries tool schemas, do a
+    // SINGLE constrained tool-call generation and return the tool_calls directly — no
+    // agent loop, no tool execution. This exposes openharn's tool-call reliability
+    // layer (prompt-tools + strict grammar + text-call recovery) to an external
+    // function-calling client such as the BFCL benchmark, so the harness's effect can
+    // be measured in isolation. Schema-agnostic: the grammar derives from the request.
+    let tools_val = req["tools"].clone();
+    let fc_proxy = std::env::var_os("OPENHARN_FC_PROXY").is_some();
+    if fc_proxy && tools_val.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        let (tool_calls, content, pt, ct) =
+            agent::fc_proxy_once(&local_cfg, &messages, &tools_val);
+        let mut message = json!({ "role": "assistant" });
+        if tool_calls.is_empty() {
+            message["content"] = json!(content);
+        } else {
+            message["content"] = Value::Null;
+            message["tool_calls"] = json!(tool_calls);
+        }
+        let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
+        let out = json!({
+            "id": id,
+            "object": "chat.completion",
+            "created": now_secs(),
+            "model": cfg.model,
+            "choices": [{
+                "index": 0,
+                "message": message,
+                "finish_reason": if tool_calls.is_empty() { "stop" } else { "tool_calls" }
+            }],
+            "usage": { "prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct }
+        });
+        let _ = request.respond(json_response(StatusCode(200), out));
+        return;
+    }
+
     // Run the agent loop for this request on a fresh session.
     let mut session = tools::Session::new(cwd.clone());
     agent::run(&local_cfg, &mut history, &mut session, &user);
