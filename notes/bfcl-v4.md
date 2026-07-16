@@ -22,7 +22,8 @@ Three conditions, same dataset, same AST checker:
   `llama-server`. openharn describes the tools in the prompt and grammar-forces a
   schema-valid `<tool_call>[{…}]` **array**.
 - **B2 — harness, native + recovery**: same proxy, but pass tools natively and only add
-  openharn's text-call recovery.
+  openharn's text-call recovery. (Measured ≈ raw — llama.cpp parses this model's native
+  calls fine, so recovery rarely fires — so it isn't broken out as a separate column.)
 
 The FC-proxy (`OPENHARN_FC_PROXY=1`) runs exactly ONE constrained generation per request
 and returns the `tool_calls` — no agent loop — so it measures the tool-call layer in
@@ -32,23 +33,30 @@ isolation. See `src/serve.rs` and `agent::fc_proxy_once`.
 
 | Category | A: raw native FC | B1: prompt-tools+strict | C: harness+gate | C − A |
 |---|---|---|---|---|
-| simple_python (40) | 32 (80.0%) | 14 (35.0%) | 26 (65.0%) | −15.0 |
-| multiple (40) | 33 (82.5%) | 4 (10.0%) | 22 (55.0%) | −27.5 |
-| parallel (40) | 0 (0.0%) | 2 (5.0%) | 3 (7.5%) | +7.5 |
-| parallel_multiple (40) | 0 (0.0%) | 2 (5.0%) | 9 (22.5%) | +22.5 |
-| irrelevance (40) | 30 (75.0%) | 37 (92.5%) | 33 (82.5%) | +7.5 |
-| **OVERALL** | **95/200 (47.5%)** | 59/200 (29.5%) | **93/200 (46.5%)** | **−1.0** |
+| simple_python (40) | 32 (80.0%) | 14 (35.0%) | 24 (60.0%) | −20.0 |
+| multiple (40) | 33 (82.5%) | 4 (10.0%) | 18 (45.0%) | −37.5 |
+| parallel (40) | 0 (0.0%) | 2 (5.0%) | 1 (2.5%) | +2.5 |
+| parallel_multiple (40) | 0 (0.0%) | 2 (5.0%) | 10 (25.0%) | +25.0 |
+| irrelevance (40) | 30 (75.0%) | 37 (92.5%) | 35 (87.5%) | +12.5 |
+| **OVERALL** | **95/200 (47.5%)** | 59/200 (29.5%) | **88/200 (44.0%)** | **−3.5** |
 
 **C** = the best harness config: prompt-tools + strict grammar + abstention sentinel +
 relevance gate (`OPENHARN_FC_PROXY=1 OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1
 OPENHARN_STRICT_ABSTAIN=1 OPENHARN_FC_GATE=1`).
 
+> **Run-to-run noise.** At temperature 0.001 with 4 parallel `llama-server` slots on CPU,
+> generation is not bit-deterministic: two gate runs landed at **44.0%** and **46.5%**
+> overall (per-category swings up to ~10 points on the 40-entry categories). So **C and A
+> are within noise** — treat the aggregate as a tie, and read the per-category deltas as
+> directional, not exact.
+
 ### The honest headline
 
-On this model, **no single harness config beats raw native FC overall** (46.5% vs 47.5%).
+On this model, **no single harness config beats raw native FC overall** (44–46.5% vs
+47.5% — a tie within noise).
 The harness *redistributes* errors rather than net-reducing them: it **fixes the two
-categories native FC scores 0% on** (`parallel_multiple` 0→22.5%, `parallel` 0→7.5%) and
-**improves abstention** (`irrelevance` 75→82.5%), but forcing calls through openharn's
+categories native FC scores 0% on** (`parallel_multiple` 0→25%, `parallel` 0→~5%) and
+**improves abstention** (`irrelevance` 75→87.5%), but forcing calls through openharn's
 text-grammar produces **less accurate arguments than the model's native tool-calling**, so
 `simple`/`multiple` regress and the aggregate lands flat.
 
@@ -66,7 +74,7 @@ to native FC for argument accuracy.
 | raw native FC | 47.5% | baseline |
 | prompt-tools + strict (B1) | 29.5% | model escapes into **prose** (`decoder_failed`) instead of calling |
 | + abstention sentinel | (mini) simple 35→100% | grammar forbids prose → `call` or `NO_TOOL`; but over-calls on irrelevance |
-| + relevance gate (C) | 46.5% | YES/NO pre-pass restores abstention (irrelevance 100% on mini); parallel fixed |
+| + relevance gate (C) | 44–46.5% | YES/NO pre-pass restores abstention (irrelevance 87.5%); parallel_multiple fixed |
 
 (The intermediate steps were tuned on an 8/cat mini-set; the 8-entry categories are noisy,
 which is why the mini-set favoured the gate by +5 but the full 200 lands flat. Real numbers,
@@ -91,7 +99,7 @@ Three new, model-agnostic tool-call knobs (all derived from the request's tools)
 1. **Multi-call array** (always on in prompt-tools). openharn's format is a JSON array, so
    several calls fit in one reply. On `parallel_0` the harness returns BOTH
    `spotify_play(Taylor Swift, 20)` and `spotify_play(Maroon 5, 15)` — the exact ground
-   truth — where native FC returned one. This is the whole `parallel_multiple` 0→22.5% gain.
+   truth — where native FC returned one. This is the whole `parallel_multiple` 0→25% gain.
 2. **Abstention grammar** (`OPENHARN_STRICT_ABSTAIN`): `root ::= call | "NO_TOOL"` — the
    model may not emit free prose, only a valid call array or a literal abstention. This
    removes the "solve it in prose instead of calling" failure.
@@ -138,11 +146,11 @@ relevance pre-pass). Documented in [`docs/adapting-openharn.md`](../docs/adaptin
 - **Best single config for this model on this subset: raw native FC.** When native
   tool-calling works, defer to it — the harness's forced-call grammar costs argument
   accuracy.
-- **The harness earns its keep on native FC's blind spots:** multi-call/parallel (0→22.5%
+- **The harness earns its keep on native FC's blind spots:** multi-call/parallel (`parallel_multiple` 0→25%
   on `parallel_multiple`) and abstention gating. Reach for prompt-tools + strict + abstain
   + gate when native FC is weak/absent (the original openharn premise) or specifically for
   those categories.
-- **Aggregate score is a wash here (46.5% vs 47.5%)** because the subset weights parallel
+- **Aggregate score is a wash here (44–46.5% vs 47.5%, within run-to-run noise)** because the subset weights parallel
   (native's 0%) and simple/multiple (native's strength) equally; the right config depends
   on the actual task mix.
 - A cheap CPU model at 2-bit clears ~47% of a BFCL v4 single-turn subset at all — most of
