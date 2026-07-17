@@ -697,13 +697,20 @@ planner*, not by bolting on a checker — there is no verifier shortcut. TinyAge
 The contrast that makes the point: openharn's *existing* grounding works because it's
 **literal**. Read-before-edit doesn't ask a model "does this file exist?" — the filesystem
 returns the real list. Plan-completeness has no literal signal, so it collapses to judgment,
-and judgment is what the small model doesn't have. The only grounding that would give a
+and judgment is what the small model doesn't have. The only grounding that gives a
 reliable gate is **execution** — run the calls, read back whether the request's targets are
 now obtained — which is a literal signal, and which openharn already has two forms of: the
-`slm_harness` executor+verifier, and BFCL's own multi-turn state check. The latter I ran
-(§ Agentic): 0/5. So even the reliable verifier doesn't rescue this model, because there the
-bottleneck moves back onto generation. Every road ends at the same place: the 4-bit model,
-not the harness.
+`slm_harness` executor+verifier, and BFCL's own multi-turn state check. So I ran it: MiniCPM
+Q4 on `multi_turn_base` (GorillaFileSystem/TwitterAPI, GPU), **0/3**. And the execution gate
+did its job *perfectly* — the model executed real calls (`mkdir temp`, `mv final_report.pdf
+temp`, then invented `find`/`grep` steps), the filesystem state genuinely changed, and the
+state check correctly scored it 0 because the plan was wrong. That's the whole point in one
+run: the execution verifier is reliable *because it's literal* — it reads real state, not a
+model's opinion — which is exactly why the semantic gates (own-Q4, MiniCheck) sit at chance
+and this one doesn't. But a reliable gate doesn't rescue the model: with verification solid,
+the bottleneck is entirely **generation** — the 4-bit model plans the wrong calls. Every
+road ends in the same place: the model, not the harness. A verifier tells you the plan is
+wrong; it can't write a right one.
 
 ## Reproduce
 
