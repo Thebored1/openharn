@@ -640,6 +640,71 @@ native FC works, healthy  → leave it alone (harness only for gaps)    [MiniCPM
 reasoning tax dominates   → enable_thinking:false first, then decide  [APEX-Compact]
 ```
 
+## The grounded gate: a clean negative
+
+The residual is dropped sub-tasks. The idea: don't ask the model to *assert* a plan is
+complete (that failed — the counter was a coin flip). Start from its implicit plan (~80%
+count, which is the good part), then run a completeness *gate* — "is every part of the
+request now covered?" — and if not, generate the missing call and loop. Count emerges from
+grounded binary checks. This is Least-to-Most (Zhou et al., arXiv:2205.10625) + factored
+isolation (Radhakrishnan et al., arXiv:2307.11768) + our own YES/NO gate, which was the one
+micro-pass that ever worked (relevance, 75→87.5%).
+
+The whole thing lives or dies on the gate. So I tested the gate in isolation as a
+completeness classifier: 40 fixed base plans from one implicit run, labelled COMPLETE (passes
+BFCL) or INCOMPLETE (fails) — 17 vs 23. A good gate flags the 23. Two checkers.
+
+**Deviations, on purpose — this is hypothesis-checking, not the benchmark.** GPU, not CPU:
+six full-offload MiniCPM-Q4 instances on the RTX 2050 (586 MiB each, ports 8080–8085,
+~111 tok/s), work distributed across them. `cache_prompt=false` on every request — no KV
+reuse, each check clean. Subset of 40, not the full category. None of this is thesis-legal;
+it's here to move fast on a hypothesis.
+
+| Checker | Acc | INCOMPLETE caught (of 23) | false alarms (of 17) | shape |
+|---|---:|---:|---:|---|
+| own Q4, grammar-locked YES/NO | 57.5% | 6 (26%) | 0 | rubber stamp — says "complete" 39/40 |
+| MiniCheck-FT5 (770M) | 55.0% | 21 (91%) | 16 | NO-machine — rejects everything |
+
+Neither works, and they fail as mirror images. The Q4 checking itself just says yes —
+exactly the self-assessment weakness that sent me to MiniCheck in the first place. MiniCheck
+(Tang et al., EMNLP 2024) is a dedicated fact-checker at GPT-4 accuracy for 400× less; it
+flips the failure but not the outcome. Its recall is a threshold artifact, not signal — the
+raw support-probabilities don't separate the classes:
+
+```
+MiniCheck support-prob   COMPLETE   mean 0.138   [0.020, 0.824]
+                         INCOMPLETE mean 0.121   [0.009, 0.591]
+                         AUC = 0.563          (0.5 = chance)
+```
+
+AUC 0.563 is chance. (And it took two framing tries: doc=request/claim=calls gave 26%;
+flipping to doc=actions/claim=request gave the 91%. My first framing was wrong, but even the
+right one is chance under the probabilities.) MiniCheck is trained for *factual* grounding —
+is claim C supported by document D — which synthesises a document to back one claim.
+Completeness is the other direction: check that *many* clauses of the claim each have an
+action. `interest_coverage(XYZ,3)` doesn't "textually support" the imperative "find the
+interest coverage ratio" the way its training defines support. Wrong relation, not a
+tunable threshold.
+
+**The wall, finally in the right place.** It's not that the model can't decompose — it does,
+~80%, *inside generation*, where it holds the tools and is committed to acting. The wall is
+that **there is no cheap reliable verifier of plan-completeness** — not the model on itself
+(chance), not a SOTA fact-checker (chance). "Is this plan done?" is irreducibly semantic and
+nothing supplies it. That is why LLMCompiler/TinyAgent buy reliability by *training the
+planner*, not by bolting on a checker — there is no verifier shortcut. TinyAgent's
+12.71→78.89% is that price, and it's paid in weights.
+
+The contrast that makes the point: openharn's *existing* grounding works because it's
+**literal**. Read-before-edit doesn't ask a model "does this file exist?" — the filesystem
+returns the real list. Plan-completeness has no literal signal, so it collapses to judgment,
+and judgment is what the small model doesn't have. The only grounding that would give a
+reliable gate is **execution** — run the calls, read back whether the request's targets are
+now obtained — which is a literal signal, and which openharn already has two forms of: the
+`slm_harness` executor+verifier, and BFCL's own multi-turn state check. The latter I ran
+(§ Agentic): 0/5. So even the reliable verifier doesn't rescue this model, because there the
+bottleneck moves back onto generation. Every road ends at the same place: the 4-bit model,
+not the harness.
+
 ## Reproduce
 
 [`tests/bfcl/README.md`](../tests/bfcl/README.md) — exact `bfcl generate/evaluate` commands,
