@@ -32,6 +32,60 @@ function-calling benchmark rather than openharn's own behavioral suite
 I read the paper/OpenReview + the Gorilla repo source (handlers, `model_config.py`,
 `TEST_CATEGORIES.md`) as the primary sources; not blog posts.
 
+### Prior art that this study lands on top of
+
+Scoping the literature *after* the measurements turned out to explain most of what we hit —
+including both dead ends. Worth recording honestly: we re-derived known results.
+
+**Grammar-constrained decoding (GCD)** — Geng et al., *"Grammar-Constrained Decoding for
+Structured NLP Tasks without Finetuning"* (EMNLP 2023, arXiv:2305.13971). Establishes the
+core openharn move: a formal grammar masks every token that can't lead to a valid output,
+so structure is *guaranteed* rather than prompted-for, with **no finetuning**. Everything
+`OPENHARN_STRICT_TOOLS` does is an instance of this. Their "without finetuning" framing is
+the thesis openharn is built on.
+
+**The format tax** — Park et al., *"Grammar-Aligned Decoding"* (NeurIPS 2024,
+arXiv:2405.21047). The critical caveat: GCD **distorts the model's distribution** — output
+is grammatical, but its likelihood is no longer proportional to what the model would
+actually have said. This is *exactly* our dead end #1 below: transplanting openharn's JSON
+array grammar onto MiniCPM (which multi-calls fluently in its native XML) produced valid
+JSON that dropped the second call — 27.5% vs 47.5% raw. The grammar didn't make the model
+worse at the task; it made it worse at *being itself*. Related work on the
+reasoning-vs-format tension explains dead end #2 (grammar × thinking → empty), and the
+fix that line converges on — **reason/draft freely first, then switch constrained decoding
+on** — is precisely what `OPENHARN_NATIVE_TEMPLATE`'s think-phase and llama.cpp's lazy
+grammar triggers (`tool_choice=required`) do. We rebuilt a known pattern the expensive way.
+
+**LLMCompiler** — Kim et al., *"An LLM Compiler for Parallel Function Calling"* (ICML 2024,
+arXiv:2312.04511). A **Function Calling Planner** decomposes a query into a **DAG of tasks
+with explicit inter-dependencies**, a Task Fetching Unit dispatches, an Executor runs them
+in parallel: up to 3.7× latency, 6.7× cost, ~9% accuracy over ReAct. This is the answer to
+our single biggest remaining error class (dropped sub-tasks, 8/11 residual failures). The
+DAG matters: dependencies are first-class, which is what a naive "split on *and*" misses —
+see `parallel_multiple_27`, where task 2's `principal=5000` is only stated in task 1.
+
+**TinyAgent** — Erdogan et al., *"TinyAgent: Function Calling at the Edge"* (EMNLP 2024
+Demo, arXiv:2409.00608). LLMCompiler on **small models, llama.cpp, 4-bit quantization,
+on-device** — our exact stack. Their planning success rates are the number to know:
+
+| Model | Off-the-shelf | Fine-tuned |
+|---|---|---|
+| TinyLlama-1.1B | **12.71%** | 78.89% |
+| Wizard-2-7B | **41.25%** | 83.09% |
+| GPT-3.5 / GPT-4-Turbo | 65.04 / 79.08% | — |
+
+and their diagnosis of off-the-shelf small models: *"not able to output the correct plans …
+errors ranged from **using the wrong set of functions, hallucinated names, wrong
+dependencies, and inconsistent syntax**."* Note that **two of those four failure modes are
+exactly what a GBNF grammar structurally eliminates** — openharn's `t-{tool}` rules make a
+hallucinated name unrepresentable, and the grammar forces syntax (we measured a single `ws`
+quantifier fix moving the harness 44→57%). TinyAgent's answer was to **fine-tune**
+(12.71→78.89%); the paper mentions no constrained decoding at all. That gap — *how much of
+a fine-tuning gain a grammar buys for free* — is the open question this repo is positioned
+to ask. Their **ToolRAG** (a DeBERTa multi-label classifier cutting the prompt 2762→1397
+tokens, ~2×) is also the honest answer to prompt-size cost on CPU, which our 1400-token
+MiniCPM tool prompt makes concrete.
+
 ---
 
 ## The question
@@ -400,6 +454,45 @@ run-to-run variance and ~4× faster generation.** The residual 27.5% is genuine 
 (e.g. one `get_rectangle_property(property="length, width")` call where ground truth wants
 two calls).
 
+### The variance collapse (the result I'd actually call novel)
+
+Look down the run columns, not just the means. Every config on this box wobbles run-to-run
+— CPU float reduction across 4 parallel slots isn't bit-deterministic, so at temp 0.001 a
+hair's-width logit difference flips a token. Except one:
+
+| Config | Runs | Spread |
+|---|---|---|
+| MiniCPM Q8 raw (thinking, free-form) | 85.0 / 85.0 / 77.5 | 7.5 |
+| MiniCPM Q4 raw (thinking, free-form) | 47.5 / 50.0 / 45.0 | 5.0 |
+| Q4 + `required`, **thinking on** | 27.5 / 40.0 / 45.0 | **17.5** |
+| Q4 + native-template + array grammar | 22.5 / 30.0 / 30.0 | 7.5 |
+| LFM2-Q2 harness D (200-entry) | 57.0 / 53.0 | 4.0 |
+| **Q4 + `required` + `enable_thinking:false`** | **72.5 / 72.5 / 72.5** | **0.0** |
+
+Three identical runs, 40 entries each, to the entry. The mechanism is mundane once you see
+it: **run-to-run variance scales with the number of unconstrained tokens.** Free-form
+generation is a noise amplifier — one divergent token cascades through a 1,000-token think
+block and changes the answer. Strip the thinking (`enable_thinking:false`) and mask the
+output space (`required`), and there are almost no free choices left: the grammar leaves so
+few legal tokens that float noise can't change the argmax. Determinism falls out of
+constraint.
+
+The pathological row is the third: `required` **with** thinking is the *worst* variance
+(17.5) — worse than no harness at all. Because it's bimodal, not noisy: the think block
+either finishes in budget (→ a good forced call) or truncates (→ empty). A coin flip
+between 45% and 27.5%. Constraining the *output* while leaving a long unconstrained
+*prefix* is the worst of both worlds.
+
+Practical upshot for a CPU-first project: the harness doesn't only raise the mean, **it
+buys reproducibility** — which is the thing this whole study kept lacking (the 8/cat mini-set
+lied, spot-checks lied, two "identical" gate runs differed by 2.5 points). This is a hard
+measurement of the claim already floated in [`reasoning-tax.md`](reasoning-tax.md) — that
+structured-output constraints reduce variance and token waste — and it comes with a bonus:
+the winning config is also **~4× faster** (no think block to generate).
+
+Caveat: n=3 runs, one model, one category. "Zero variance" means *these three runs agreed*,
+not that the config is provably deterministic.
+
 Mechanics worth recording:
 
 - **llama-server rejects `tools` + custom `grammar` in one request** ("Cannot use custom
@@ -423,6 +516,35 @@ Mechanics worth recording:
   `required`). The 16k/`--parallel 4` re-baseline also lifted *raw* Q4 from ~43 to 47.5%.
 - **Spot checks lie, again:** `required` fixed 3 of 4 hand-picked entries, then lost to raw
   on the full 40 (37.5 vs 47.5) until no-think landed. Full-subset × 3 runs or it didn't happen.
+
+### What's left — the wall
+
+After the rescue, 11/40 fail. Sorted by what could move them:
+
+| Residual | Count | Movable by a harness? |
+|---|---|---|
+| **Dropped a sub-task** (decomposition) | 8 | Only by a *planner* (LLMCompiler/TinyAgent) — and that planner is the same weak model |
+| Argument precision (`"Los Angeles"` vs `"Los Angeles, CA"`) | 2 | Partly; enums where the schema declares them, nothing where it's free-form |
+| Format leak into an arg string (`pm_22`) | 1 | Yes — tolerant native-format parse |
+
+So the ceiling is **decomposition**, and TinyAgent quantifies the wall exactly: off-the-shelf
+small models plan at **12.71%** (1.1B) / **41.25%** (7B); fine-tuning gets 78–83%. That
+~66-point gap is what *training* buys. A grammar can delete two of their four named failure
+modes (hallucinated names, inconsistent syntax) — but it cannot make a model *notice there
+are two clauses in the sentence*. That's the wall:
+
+> **The harness can restrict the output space. It cannot add information the model doesn't
+> have, or computation it doesn't do.** Every win in this study was a *form* error deleted
+> (syntax, delimiters, prose escapes, over-calling). Every residual is a *semantic* error
+> (which tool, what value, how many tasks). Factor the task into the narrowest constrained
+> sub-decisions you like — whatever the model still gets wrong at that granularity is
+> irreducible without weights.
+
+The gate is the one crack in that wall: relevance *is* semantic, and a grammar-locked YES/NO
+micro-pass supplied it (75→87.5%). So the honest refinement is that **judgment isn't a
+monolith — some judgments factor into cheap constrained classifications**, and those the
+harness can supply. Whether decomposition is one of those, or is on the far side of the
+wall with TinyAgent's 12.71%, is the next measurable question.
 
 The refined per-model decision tree, one experiment later:
 
