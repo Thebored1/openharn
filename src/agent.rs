@@ -1103,20 +1103,23 @@ fn tool_grammar(schemas: &Value, root: &str) -> String {
 /// the model should emit (what `parse_text_tool_calls` recovers). Used when the server
 /// has no native tool-calling.
 fn tool_prompt(schemas: &Value) -> String {
-    // The abstention clause differs by mode: with OPENHARN_STRICT_ABSTAIN the grammar
-    // forbids free prose, so "no tool fits" must be the literal NO_TOOL sentinel;
-    // otherwise the model just answers normally.
-    let no_tool_clause = if std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some() {
-        "If NO available tool fits the request, reply with exactly: NO_TOOL (and nothing else)."
+    // The coding agent wants ONE focused call and must NOT fire on greetings — so the
+    // default prompt is the terse original. The multi-call encouragement + "prefer calling"
+    // wording only helps a multi-call benchmark (BFCL parallel) and *hurts* the agent
+    // (greeting → todoread, glob+grep double-fire), so it is gated behind OPENHARN_STRICT_ABSTAIN
+    // (the BFCL-side flag). See the behavioral suite: with the wording ungated LFM2-Q2 drops
+    // greeting_uses_no_tools and find_file_uses_glob_not_grep.
+    let extra = if std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some() {
+        "Put SEVERAL objects in the array to call multiple tools in one reply (one object per call).\n\
+         Prefer calling an available tool over answering the request from your own knowledge. \
+         If NO available tool fits the request, reply with exactly: NO_TOOL (and nothing else). "
     } else {
-        "Otherwise, answer the user normally."
+        "Otherwise, answer the user normally. "
     };
     let mut s = format!(
-        "You do NOT have a tool API. To call tools, reply with ONLY a tool-call line and nothing else:\n\
+        "You do NOT have a tool API. To call a tool, reply with ONLY this line and nothing else:\n\
          <tool_call>[{{\"name\": \"<tool>\", \"arguments\": {{ ... }}}}]\n\
-         Put SEVERAL objects in the array to call multiple tools in one reply (one object per call).\n\
-         Prefer calling an available tool over answering the request from your own knowledge. \
-         {no_tool_clause} Available tools:\n"
+         {extra}Available tools:\n"
     );
     if let Some(arr) = schemas.as_array() {
         for t in arr {
