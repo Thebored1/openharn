@@ -523,7 +523,7 @@ After the rescue, 11/40 fail. Sorted by what could move them:
 
 | Residual | Count | Movable by a harness? |
 |---|---|---|
-| **Dropped a sub-task** (decomposition) | 8 | Partly — a draft-then-constrain counting pass hits 85% (see below) |
+| **Dropped a sub-task** (decomposition) | 8 | No — a counting micro-pass is too unstable to condition on (57.5–85% on prompt wording); injecting it costs −20 pts (below) |
 | Argument precision (`"Los Angeles"` vs `"Los Angeles, CA"`) | 2 | Partly; enums where the schema declares them, nothing where it's free-form |
 | Format leak into an arg string (`pm_22`) | 1 | Yes — tolerant native-format parse |
 
@@ -531,8 +531,8 @@ So the ceiling is **decomposition**. TinyAgent prices what *training* buys there
 off-the-shelf small models plan at **12.71%** (1.1B) / **41.25%** (7B); fine-tuning gets
 78–83%. A grammar deletes two of their four named failure modes (hallucinated names,
 inconsistent syntax) — but can it make a model *notice there are two clauses in the
-sentence*? I wrote "no" here, then measured it. The answer is **mostly yes**, and the
-measurement is below.
+sentence*? I wrote "no" here, then measured it — got "yes" on one run, wrote that up,
+and it failed to replicate. The measurement, and the correction, are below.
 
 ### Probing the wall: can a micro-pass count sub-tasks?
 
@@ -547,58 +547,89 @@ matter, and the second one is brutal:
 
 | Decomposer variant | Exact | needs≥3 | Parsed | Note |
 |---|---|---|---|---|
-| always-2 (constant) | 82.5% | **0/7** | — | trivial baseline |
+| always-2 (constant) | **82.5%** | **0/7** | — | trivial baseline |
 | model's implicit | 80.0% | — | — | current behaviour |
 | grammar `[1-9]` @ token 0 | **0.0%** | 0/7 | 40/40 | answered "1" ×40 |
 | free reasoning, no grammar | 50.0% | 4/7 | **21/40** | 95% precise *when it answers* |
-| **two-pass: reason → constrain digit** | **85.0%** | **5/7** | **40/40** | 410s |
+| two-pass, wording A | 85.0% | 5/7 | 40/40 | **did not reproduce — see below** |
+| two-pass, wording B | **57.5%** | 5/7 | 40/40 | same procedure, one sentence changed |
 
-Read those middle rows carefully, because they are the whole story:
+Three things are real here, and one was a mirage.
 
-1. **Grammar-at-token-0 scored 0/40** — it answered "1" to everything. Not the model
-   failing: the constraint collapsing the output to the **prior**. This is Grammar-Aligned
-   Decoding's distribution distortion (arXiv:2405.21047) reproduced in one line of GBNF, and
-   it is the same mistake as dead end #1. *My probe violated the design rule this very note
-   derives.*
-2. **Unconstrained, it's 95% precise but only answers 21/40 times.** The other 19 are
-   unparseable — it won't emit `COUNT=<digit>`. So the failure was **form**, not semantics.
-   The model knew the answer and couldn't say it.
-3. **Draft-then-constrain fixes both**: reason freely, then grammar-force only the final
-   digit → **40/40 parsed, 85.0%**, beating implicit (80%) and the constant (82.5%).
+**Real 1 — grammar-at-token-0 scored 0/40**, answering "1" to everything. Not the model
+failing: the constraint collapsing the output to the **prior**. Grammar-Aligned Decoding's
+distribution distortion (arXiv:2405.21047) reproduced in one line of GBNF — the same
+mistake as dead end #1. *My probe violated the design rule this very note derives.*
 
-So decomposition is **factorable** — it is not on the far side of the wall. That's the third
-time in this study the same pattern was the fix (native call format; quant-degraded syntax;
-now counting):
+**Real 2 — unconstrained, it's 95% precise but only answers 21/40 times.** The other 19 are
+unparseable. So *that* failure was **form**, not semantics.
 
-> **Constrain the answer, never the reasoning.** Constrain from token 0 → you get the prior.
-> Don't constrain at all → half the output is unparseable. Constrain only the last token,
-> conditioned on free reasoning → you get the model's actual competence.
+**Real 3 — draft-then-constrain fixes the form problem completely**: 21/40 → **40/40 parsed**,
+every time, both wordings. Constraining only the final digit after free reasoning does
+recover parseability without collapsing the answer.
 
-**Two caveats, stated before anyone gets excited:**
+**The mirage — the accuracy.** The first two-pass run scored 85.0% and I wrote it up as
+"the wall moved." It does not reproduce. The only difference between the runs is one
+sentence of the instruction:
 
-- **The margin over a dumb constant is one entry** (34 vs 33 of 40). That is not a result.
-  The *robust* signal is `needs≥3`: **5/7 vs 0/7**, where a constant cannot score by
-  construction — the decomposer does real work exactly where it matters. But this category
-  is 82.5% twos, so the aggregate flatters the trivial baseline. Needs replication and a
-  category with a wider call-count spread.
-- **It costs the variance collapse.** ~+10 s/entry, and it needs the think block — the very
-  thing `enable_thinking:false` removed to buy determinism and 4× speed. So counting
-  accuracy trades against reproducibility. On this category that trade looks bad.
+| Instruction tail | Predicted distribution | Exact |
+|---|---|---|
+| "Think it through, then give the final count." | `{1:3, 2:30, 3:4, 4:3}` | 85.0% |
+| "…then end with the final count as: `COUNT=<digit>`" | `{1:1, 2:18, 3:4, 4:15, 6:1, 7:1}` | **57.5%** |
 
-### So what is the wall, then
+Ground truth is `{2:33, 3:3, 4:4}`. Wording B predicts **4 calls for 15–20 of 40 entries**
+when only 4 entries need 4. A 27-point swing from a cosmetic prompt change means the pass
+is not *counting* — it is pattern-matching the instruction. `tests/bfcl/decompose_probe.py`
+ships wording B (the reproducible 57.5%), not the lucky 85%.
 
-Not "decomposition is semantic, therefore unreachable." The honest version:
+**And wiring it in actively hurts.** Feeding the predicted count to the generation as
+"emit exactly N calls" (`OPENHARN_TOOL_CHOICE=required` + no-think), A/B on the same
+pipeline:
 
-> **The harness can restrict the output space; it cannot add information the model lacks.**
-> But "what the model lacks" is much narrower than it looks from the failures, because most
-> apparent judgment failures are **form failures in disguise** — the model knows and can't
-> say it. Factor the task into the narrowest question you can pose, let it reason freely,
-> and constrain only the answer. **The wall is whatever it still gets wrong then.**
+| Arm | Accuracy |
+|---|---|
+| control (no count injected) | 57.5% |
+| **+ decomposer count injected** | **37.5%** |
 
-Judgment isn't a monolith. Relevance factored out (the gate: 75→87.5%). Counting factored
-out (85%). What has *not* factored out: which tool among several, and argument values —
-plus the untested question of whether *forcing* a count makes the generation pick the right
-second tool or merely emit a filler call.
+−20 points. That answers the open question: forcing a count does **not** make the model find
+the missing sub-task — a confidently-wrong N makes it **fabricate filler calls**. The
+model's own implicit decomposition (80% counting) is better than an unreliable external
+count, and a wrong count is worse than no count. (Caveat: this control scores 57.5% rather
+than the 72.5% headline because the A/B harness re-implements the tool conversion more
+crudely than BFCL's `convert_to_tool`; both arms share that pipeline, so the −20 **delta**
+is valid, the absolute isn't.)
+
+The one durable signal: `needs≥3` = **5/7 in both wordings**, where the constant scores 0/7
+by construction. It can detect "this needs more than two" — it just can't calibrate *how
+many*, and over-fires on the twos.
+
+### So the wall stands — but the reason is sharper
+
+Not "the model can't decompose." Measured:
+
+> **The model can sometimes count, but not stably enough to condition on.** A pass whose
+> answer swings 27 points on cosmetic prompt wording isn't a measurement, it's a coin flip
+> with a prior. And because a wrong count *forces* fabrication, an unreliable planner is
+> worse than none: the harness can't safely delegate to a judgment it can't trust.
+
+So the wall from the earlier section holds, with one crack and one correction:
+
+- **The crack is real**: relevance factored out (the gate: 75→87.5%) — a judgment *can*
+  become a mechanic when the question is binary and the model's answer is stable.
+- **The correction**: counting did *not* factor out. Its form problem is solvable
+  (40/40 parsed); its *calibration* is not. Stability, not parseability, is the bar — and
+  nothing in the harness supplies stability.
+
+That is also the honest reading of TinyAgent's 12.71% → 78.89%: what fine-tuning buys is not
+the ability to emit a plan, it's a **reliable** one. Grammar deletes two of their four
+failure modes (hallucinated names, inconsistent syntax). It cannot buy the other two
+(wrong function set, wrong dependencies), and this probe is a direct measurement of that
+boundary.
+
+**Meta-lesson, stated plainly:** every result in this study that was not replicated turned
+out to be wrong — the 8/cat mini-set (+5 → flat), the spot-check of `required` (3/4 → lost
+on 40), "only judgment misses left" (→ a format leak), and now the decomposer (85% → 57.5%).
+Four for four. One run is a hypothesis.
 
 The refined per-model decision tree, one experiment later:
 
