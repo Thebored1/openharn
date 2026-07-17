@@ -523,28 +523,82 @@ After the rescue, 11/40 fail. Sorted by what could move them:
 
 | Residual | Count | Movable by a harness? |
 |---|---|---|
-| **Dropped a sub-task** (decomposition) | 8 | Only by a *planner* (LLMCompiler/TinyAgent) — and that planner is the same weak model |
+| **Dropped a sub-task** (decomposition) | 8 | Partly — a draft-then-constrain counting pass hits 85% (see below) |
 | Argument precision (`"Los Angeles"` vs `"Los Angeles, CA"`) | 2 | Partly; enums where the schema declares them, nothing where it's free-form |
 | Format leak into an arg string (`pm_22`) | 1 | Yes — tolerant native-format parse |
 
-So the ceiling is **decomposition**, and TinyAgent quantifies the wall exactly: off-the-shelf
-small models plan at **12.71%** (1.1B) / **41.25%** (7B); fine-tuning gets 78–83%. That
-~66-point gap is what *training* buys. A grammar can delete two of their four named failure
-modes (hallucinated names, inconsistent syntax) — but it cannot make a model *notice there
-are two clauses in the sentence*. That's the wall:
+So the ceiling is **decomposition**. TinyAgent prices what *training* buys there:
+off-the-shelf small models plan at **12.71%** (1.1B) / **41.25%** (7B); fine-tuning gets
+78–83%. A grammar deletes two of their four named failure modes (hallucinated names,
+inconsistent syntax) — but can it make a model *notice there are two clauses in the
+sentence*? I wrote "no" here, then measured it. The answer is **mostly yes**, and the
+measurement is below.
 
-> **The harness can restrict the output space. It cannot add information the model doesn't
-> have, or computation it doesn't do.** Every win in this study was a *form* error deleted
-> (syntax, delimiters, prose escapes, over-calling). Every residual is a *semantic* error
-> (which tool, what value, how many tasks). Factor the task into the narrowest constrained
-> sub-decisions you like — whatever the model still gets wrong at that granularity is
-> irreducible without weights.
+### Probing the wall: can a micro-pass count sub-tasks?
 
-The gate is the one crack in that wall: relevance *is* semantic, and a grammar-locked YES/NO
-micro-pass supplied it (75→87.5%). So the honest refinement is that **judgment isn't a
-monolith — some judgments factor into cheap constrained classifications**, and those the
-harness can supply. Whether decomposition is one of those, or is on the far side of the
-wall with TinyAgent's 12.71%, is the next measurable question.
+Setup: for each of the 40 `parallel_multiple` entries, ask the model *only* "how many
+separate tool calls does this need?" and compare to `len(ground_truth)`. Two baselines
+matter, and the second one is brutal:
+
+- **the model's implicit count** (what it does today in the winning config): **32/40 = 80%**
+- **a constant "2"**: the ground-truth distribution is **33 twos, 3 threes, 4 fours** — no
+  entry needs 1 — so answering "2" blindly scores **33/40 = 82.5%**, already beating the
+  model. Any decomposer has to clear a dumb constant.
+
+| Decomposer variant | Exact | needs≥3 | Parsed | Note |
+|---|---|---|---|---|
+| always-2 (constant) | 82.5% | **0/7** | — | trivial baseline |
+| model's implicit | 80.0% | — | — | current behaviour |
+| grammar `[1-9]` @ token 0 | **0.0%** | 0/7 | 40/40 | answered "1" ×40 |
+| free reasoning, no grammar | 50.0% | 4/7 | **21/40** | 95% precise *when it answers* |
+| **two-pass: reason → constrain digit** | **85.0%** | **5/7** | **40/40** | 410s |
+
+Read those middle rows carefully, because they are the whole story:
+
+1. **Grammar-at-token-0 scored 0/40** — it answered "1" to everything. Not the model
+   failing: the constraint collapsing the output to the **prior**. This is Grammar-Aligned
+   Decoding's distribution distortion (arXiv:2405.21047) reproduced in one line of GBNF, and
+   it is the same mistake as dead end #1. *My probe violated the design rule this very note
+   derives.*
+2. **Unconstrained, it's 95% precise but only answers 21/40 times.** The other 19 are
+   unparseable — it won't emit `COUNT=<digit>`. So the failure was **form**, not semantics.
+   The model knew the answer and couldn't say it.
+3. **Draft-then-constrain fixes both**: reason freely, then grammar-force only the final
+   digit → **40/40 parsed, 85.0%**, beating implicit (80%) and the constant (82.5%).
+
+So decomposition is **factorable** — it is not on the far side of the wall. That's the third
+time in this study the same pattern was the fix (native call format; quant-degraded syntax;
+now counting):
+
+> **Constrain the answer, never the reasoning.** Constrain from token 0 → you get the prior.
+> Don't constrain at all → half the output is unparseable. Constrain only the last token,
+> conditioned on free reasoning → you get the model's actual competence.
+
+**Two caveats, stated before anyone gets excited:**
+
+- **The margin over a dumb constant is one entry** (34 vs 33 of 40). That is not a result.
+  The *robust* signal is `needs≥3`: **5/7 vs 0/7**, where a constant cannot score by
+  construction — the decomposer does real work exactly where it matters. But this category
+  is 82.5% twos, so the aggregate flatters the trivial baseline. Needs replication and a
+  category with a wider call-count spread.
+- **It costs the variance collapse.** ~+10 s/entry, and it needs the think block — the very
+  thing `enable_thinking:false` removed to buy determinism and 4× speed. So counting
+  accuracy trades against reproducibility. On this category that trade looks bad.
+
+### So what is the wall, then
+
+Not "decomposition is semantic, therefore unreachable." The honest version:
+
+> **The harness can restrict the output space; it cannot add information the model lacks.**
+> But "what the model lacks" is much narrower than it looks from the failures, because most
+> apparent judgment failures are **form failures in disguise** — the model knows and can't
+> say it. Factor the task into the narrowest question you can pose, let it reason freely,
+> and constrain only the answer. **The wall is whatever it still gets wrong then.**
+
+Judgment isn't a monolith. Relevance factored out (the gate: 75→87.5%). Counting factored
+out (85%). What has *not* factored out: which tool among several, and argument values —
+plus the untested question of whether *forcing* a count makes the generation pick the right
+second tool or merely emit a filler call.
 
 The refined per-model decision tree, one experiment later:
 

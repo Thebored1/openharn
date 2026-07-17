@@ -94,6 +94,23 @@ OPENHARN_MAX_TOKENS=1024 ./target/debug/openharn . &
 the gate on abstention workloads. `enable_thinking:false` is a no-op on templates without
 the switch.
 
+## Decomposition probe (`decompose_probe.py`)
+
+Probes the biggest residual failure class (dropped sub-tasks) without touching openharn —
+asks the model only "how many separate tool calls does this need?" and scores against
+`len(ground_truth)`. Needs a `llama-server` on :8080 with `--jinja`:
+
+```sh
+python tests/bfcl/decompose_probe.py "$SITE_PACKAGES/bfcl_eval"          # all 4 variants
+python tests/bfcl/decompose_probe.py "$SITE_PACKAGES/bfcl_eval" two-pass  # just the winner
+```
+
+The variant comparison is the point (full analysis in [`notes/bfcl-v4.md`](../../notes/bfcl-v4.md)):
+grammar-from-token-0 collapses to the prior (0%), free reasoning is 95% precise but half
+unparseable (50%), and **draft-then-constrain is 40/40 parsed at 85%**. Both baselines it
+must clear are printed automatically — including a constant "2", which scores 82.5% on this
+category and beats the model's own implicit count.
+
 ## Agentic / multi-turn (`multi_turn_*`, `memory_*`, `web_search_*`)
 
 These run through the same FC-proxy, but **drop `OPENHARN_FC_GATE`** — the relevance gate
