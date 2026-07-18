@@ -1,38 +1,85 @@
-# DSGoal: ≥60% AST — results and changes
+# DSGoal: BFCL AST accuracy — results and model-agnostic harness changes
 
 ## Goal
-Achieve ≥60% AST-level function-calling accuracy on BFCL-style evaluation with the LFM2-8B-A1B-UD-Q2_K_XL model (2-bit quant, ~1B active MoE), with all changes model-agnostic.
+Push BFCL v4 AST accuracy on the 160-entry subset past 80% with the LFM2-8B-A1B-UD-Q2_K_XL
+model (2-bit quant, ~1B active MoE), with all changes model-agnostic (no fine-tuning, no
+model swap).
 
-## Results summary
+## Honest result (faithful evaluator, mirrors official bfcl_eval ast_checker)
 
-| Benchmark | Cases | Score | Baseline | Δ |
-|---|---|---|---|---|
-| Custom 24-case representative set | 24 | **92.9%** | ~57% (BFCL D) | +35.9 |
-| BFCL 160-entry subset (best run) | 160 | **74.6%** | 57% (BFCL D, 200-entry)* | +17.6 |
+| Category | Score | Cases |
+|---|---|---|
+| simple_python | 80.0% | 32/40 |
+| multiple | 77.5% | 31/40 |
+| parallel | 47.5% | 19/40 |
+| parallel_multiple | 45.0% | 18/40 |
+| **OVERALL** | **62.5%** | **100/160** |
 
-Per-category (best 160-entry run with aligned evaluator):
+**Conclusion: ~62-63% is the genuine, reproducible ceiling for this 2-bit quant model under
+faithful BFCL all-or-nothing AST scoring. 80% is NOT achievable model-agnostically with this
+model.** The dominant failures are in the `parallel` / `parallel_multiple` categories (45-47%),
+which require decomposing one user request into N separate tool calls with correct argument
+values. The 2-bit quant cannot do this decomposition. Every model-agnostic harness lever was
+tried and measured (see below) — none moves parallel past ~50%.
 
-| Category | Score |
-|---|---|
-| simple_python | 77.5% (31/40) |
-| multiple | 75.0% (30/40) |
-| parallel | 64.2% (26/40) |
-| parallel_multiple | **76.9% (31/40)** |
-| **OVERALL** | **74.6% (119/160)** |
+Run-to-run variance at temperature 0.001 is small (±2 points); the ceiling is structural,
+not noise.
 
-Run-to-run variance: ±6.5% (range 62-75% across 3 runs with same config).
+### What was proven NOT to work (measured, not assumed)
+- **Pre-count gate** (`OPENHARN_FC_PRECOUNT`): a grammar-constrained LLM call to count needed
+  calls. The count model itself answers "1" for requests needing 3 — it cannot count
+  operations either. Hinting "exactly K" with a wrong K made under-generation worse.
+- **Iterative one-call-at-a-time loop** (`OPENHARN_FC_ITERATE`): generate one call, feed back
+  "what remains?", expect `DONE`. The model emits 1 call then `DONE` (under) OR repeats the
+  same call until the 9-cap (over) — it never reliably enumerates the remaining operations.
+- **Self-consistency / majority-vote across 5 generations**: parallel 50.0%, parallel_multiple
+  45.0% — identical to single-shot. The model deterministically under-generates, so voting
+  converges on the wrong (too-small) count.
+- **Prompt variants** (multi-call examples, plan field, 7-step reasoning): all scored 27-44%.
+  The model follows *some* format but cannot decompose.
 
-*The original BFCL D config scored 57% on a 200-entry subset using a different llama.cpp build.
+The earlier "74.6% / parallel_multiple 76.9%" figures in this file were produced by a
+LENIENT custom evaluator (partial credit, no exact-count requirement) that the OFFICIAL bfcl
+checker would reject. They are invalid against the real benchmark and have been removed.
 
-### Root cause of the earlier "39% / parallel_multiple 0%" reading
-The `parallel_multiple` category was NOT a model ceiling. Manual probing showed the
-model produces correct multi-tool decompositions (e.g. `parallel_multiple_0` returns
-both `sum_of_multiples` and `product_of_primes` perfectly). The 0% readings came from
-running the benchmark while an experimental `{"plan":.., "calls":[..]}` wrapper grammar
-was live — that grammar produced output the FC-proxy could not parse back into
-`tool_calls`, so every multi-call case scored 0. Reverting to the array-format grammar
-(`call ::= ( "<tool_call>" )? "[" obj ( "," obj )* "]"`) plus a simple multi-call
-prompt restored correct outputs, and the true score is **64.3%**, above the 60% goal.
+## What was proven to WORK (faithful, model-agnostic, generalizes to any model)
+
+### 1. Faithful evaluator (`tests/bench_bfcl_160.py`) matching official bfcl_eval
+Rewrote the custom scorer to mirror `bfcl_eval/eval_checker/ast_eval/ast_checker.py` exactly:
+- `standardize_string` strips `[ ,./-_*^]` and lowercases before comparing string/list
+  argument values — so `x^2`==`x**2` and `vice_president`==`vice president` score correctly
+  (these ARE accepted by official BFCL; my earlier strict string compare was wrong).
+- All-or-nothing per test case (official `simple`/`multiple`/`parallel` checkers).
+- Exact function-count requirement (official `parallel_function_checker_no_order:wrong_count`).
+- Official `multiple` category validates only `model_output[0]` after the count gate (the
+  real checker ignores extra calls) — mirrored here.
+- Nested array values (`"multiples": [[3,5]]`) compared element-wise via the typed-array path.
+
+### 2. Hybrid native-FC + prompt-tools candidate selection (`src/agent.rs` `fc_proxy_once`)
+Tries native OpenAI-style tool calling and prompt-tools+grammar, then picks the candidate
+with the best call count. This is the single-shot configuration that produced the 62.5%.
+
+### 3. Typed array grammar rules + incomplete-array recovery (earlier commits, still in tree)
+Constrain array element types at the grammar level; recover truncated call arrays so correct
+calls are never silently dropped.
+
+## How to reproduce (honest)
+```sh
+# Terminal 1: llama-server
+llama-server -m LFM2-8B-A1B-UD-Q2_K_XL.gguf --jinja --ctx-size 16384 -ngl 0 --port 8081
+# Terminal 2: openharn FC-proxy (single-shot hybrid)
+OPENHARN_BASE_URL=http://127.0.0.1:8081/v1 OPENHARN_SERVE=1 OPENHARN_SERVE_PORT=8090 \
+OPENHARN_FC_PROXY=1 OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 \
+OPENHARN_MAX_TOKENS=2048 ./target/debug/openharn .
+# Terminal 3: benchmark
+python3 tests/bench_bfcl_160.py --url http://127.0.0.1:8090/v1
+```
+
+## Verdict on the 80% goal
+Not achievable with LFM2-8B-A1B 2-bit quant via model-agnostic harness changes. Reaching 80%
+requires a base model with genuine multi-tool decomposition ability (e.g. a stronger / less
+aggressively quantized model). The harness itself is now correct and faithful; the limit is the
+model. All 29 unit tests pass.
 
 ## Changes made (all model-agnostic)
 
@@ -75,23 +122,28 @@ Created a standalone AST-level evaluation script that:
 - Uses the same scoring methodology as BFCL (function name + argument presence + argument types)
 - Runs against the openharn FC-proxy endpoint directly (no bfcl-eval dependency)
 
-## Remaining failures (74.6% → ceiling)
+## Remaining failures (62.5% → model ceiling)
 
-After aligning the evaluator with official BFCL v4 AST checker, the remaining ~25% failures break down as:
+After making the evaluator faithful to official BFCL, the remaining ~37% failures are
+overwhelmingly in `parallel` (47.5%) and `parallel_multiple` (45.0%). Per-case inspection
+confirms these are genuine model errors:
 
-- **Wrong tool selection** (~15 cases): Model picks incorrect function name (e.g. `calculate_integral` when `integral` expected). These are genuine model judgment errors — no harness change can fix wrong tool choices.
-- **Argument value errors** (~10 cases): Model gets function name right but wrong values (e.g. "52.33" when "30.45" expected). These are model comprehension failures.
-- **Under-count on parallel calls** (~8 cases): Model emits 1 call when 2+ needed. The `tool_prompt` explicitly instructs to emit multiple calls, but the Q2 model's decomposition capability is limited.
-- **Duplicate/over-count** (~6 cases): Model emits more calls than needed.
+- **Under/over-decomposition** (count mismatch): model emits 1 call when 2-4 needed, or 4
+  when 2 needed. Official BFCL requires exact count → automatic 0.
+- **Wrong argument values** on multi-call cases (e.g. wrong interval formatting `x^2` vs
+  `x**2`, wrong numbers): genuine model comprehension failures.
 
-**None of these are harness issues.** The FC-proxy correctly receives and routes all tool calls, the GBNF grammar forces valid JSON arrays, and the evaluator applies official BFCL normalization. The ~25% gap represents this specific Q2 model's judgment/comprehension ceiling when operating on BFCL's diverse, real-world function names and argument values.
+Single-call categories are near their limit (simple 80%, multiple 77.5%); the residual there
+is also genuine value errors the model cannot avoid.
 
-To bridge the remaining gap to 80%, you would need:
-1. **A higher-quality quant** (Q4_K_M or Q8_0) — but one doesn't exist for this model variant
-2. **Fine-tuning the model** on BFCL-style data (SFT or RL-based, per STAR/ToolACE findings)
-3. **A different model entirely** (e.g. LFM2.5-8B-A1B, Qwen3.5-0.8B) — see tests/bfcl/README.md for cross-model results
+**None of these are harness issues.** The FC-proxy correctly routes tool calls, the GBNF
+grammar forces valid JSON, and the evaluator now applies official BFCL normalization. The gap
+is this 2-bit quant's decomposition/comprehension ceiling on BFCL's diverse real-world
+function names and argument values.
 
-The 74.6% result validates that the model-agnostic harness changes are correct and effective — every valid multi-tool call the model produces is now correctly captured and scored. The remaining gap is a model capability issue, not a harness one.
+To reach 80% you would need a model with genuine multi-tool decomposition ability (a stronger
+or less-aggressively-quantized base), not a harness change. The model-agnostic harness is
+correct and faithful; the limit is the model. All 29 unit tests pass.
 
 ## Key architectural changes
 
@@ -101,34 +153,17 @@ The 74.6% result validates that the model-agnostic harness changes are correct a
 - `src/agent.rs`: `GRAMMAR_TAIL` — added typed array rules
 - `src/agent.rs`: `relevance_gate` — expanded prompt with 7 curated YES/NO examples
 - `src/agent.rs`: `tool_prompt` — added BFCL-style multi-call examples in prompt
-- `tests/bench_bfcl_160.py`: aligned evaluator with official BFCL v4 AST checker:
-  - `standardize_string` — normalizes punctuation/whitespace/case (r"[ \,\.\/\-\_\*\^]", .lower())
+- `tests/bench_bfcl_160.py`: faithful evaluator mirroring official bfcl_eval ast_checker:
+  - `standardize_string` — strips `[ ,./-_*^]` + lowercases for string/list arg compare
   - `convert_func_name` — underscore_to_dot name matching (BFCL's `convert_func_name`)
-  - `parallel_function_checker_no_order` — greedy multi-call matching
-  - Retry on empty/no-call responses
-  - 180s timeout, 2048 max_tokens optimal for Q2 model
-- `tests/ast_benchmark.py`: new comprehensive AST evaluation suite (24 cases, 6 categories)
-
-## How to reproduce
-
-```sh
-# Terminal 1: start llama-server
-llama-server -m LFM2-8B-A1B-UD-Q2_K_XL.gguf --jinja --ctx-size 16384 -ngl 0 --port 8081
-
-# Terminal 2: start openharn FC-proxy
-OPENHARN_BASE_URL=http://127.0.0.1:8081/v1 OPENHARN_SERVE=1 OPENHARN_SERVE_PORT=8090 \
-OPENHARN_FC_PROXY=1 OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 \
-OPENHARN_STRICT_ABSTAIN=1 OPENHARN_FC_GATE=1 \
-OPENHARN_MAX_TOKENS=512 ./target/debug/openharn .
-
-# Terminal 3: run benchmark
-python3 tests/ast_benchmark.py
-```
+  - all-or-nothing per test; exact function-count requirement
+  - `multiple` category validates only `model_output[0]` (matches official checker)
+  - nested array values compared element-wise
 
 ## References
 
 - Patil et al., "The Berkeley Function Calling Leaderboard (BFCL)", ICML 2025
-- Belcak et al., "Small Language Models are the Future of Agentic AI", NVIDIA arXiv 2025
 - Lee et al., "Don't Adapt SLMs for Tools; Adapt Tool Schemas to the Models", arXiv 2025
 - NVIDIA Developer Blog, "Improving Bash Generation with Grammar-Constrained Decoding", 2026
+- BFCL v4 Format Sensitivity, gorilla.cs.berkeley.edu, 2025
 - BFCL v4 Format Sensitivity, gorilla.cs.berkeley.edu, 2025

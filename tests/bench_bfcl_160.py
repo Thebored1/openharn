@@ -53,7 +53,8 @@ def tool_from_func(func):
     }}
 
 def call_fc(messages, tools, retry=True):
-    body = json.dumps({"model":"local","messages":messages,"tools":tools,"temperature":0.001,"max_tokens":MAX_TOKENS}).encode()
+    # temperature 0.0 matches the official BFCL evaluation (deterministic).
+    body = json.dumps({"model":"local","messages":messages,"tools":tools,"temperature":0.0,"max_tokens":MAX_TOKENS}).encode()
     req = urllib.request.Request(f"{FC_URL}/chat/completions", data=body, headers={"Content-Type":"application/json"})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
@@ -104,7 +105,7 @@ def val_match(vals, actual):
         if ev == actual: return True
     return False
 
-def evaluate(q, ground_truths):
+def evaluate(q, ground_truths, cat=None):
     messages = [{"role": m.get("role","user"), "content": m.get("content","")} for m in q["question"][0]]
     tools = [tool_from_func(f) for f in q["function"]]
     tc, content = call_fc(messages, tools)
@@ -161,22 +162,31 @@ def evaluate(q, ground_truths):
                 return False
         return True
 
-    # Greedy no-order matching: each expected must find one distinct valid actual call.
-    _used = set()
-    matched = 0
-    for gname, gargs in norm_gt:
-        for ai, (aname, aargs) in enumerate(actual):
-            if ai in _used:
-                continue
-            if call_valid(gname, gargs, aname, aargs):
-                _used.add(ai)
-                matched += 1
-                break
-
-    # All-or-nothing: the whole test passes only if every expected call matched.
-    ok = (matched == len(norm_gt))
+    # Faithful to official BFCL category checkers:
+    #  - parallel / parallel_multiple: greedy no-order matching, ALL calls must match.
+    #  - simple / multiple: official BFCL validates ONLY model_output[0] (the first call),
+    #    after the exact-count gate. Extra calls beyond the first are ignored by the
+    #    official checker, so we mirror that here.
+    if cat in ("parallel", "parallel_multiple"):
+        _used = set()
+        matched = 0
+        for gname, gargs in norm_gt:
+            for ai, (aname, aargs) in enumerate(actual):
+                if ai in _used:
+                    continue
+                if call_valid(gname, gargs, aname, aargs):
+                    _used.add(ai)
+                    matched += 1
+                    break
+        ok = (matched == len(norm_gt))
+        reason = f"ok {matched}/{len(norm_gt)}" if ok else f"matched {matched}/{len(norm_gt)}"
+    else:
+        # simple / multiple: count already matched; validate only the first actual call
+        # against the (single) expected call.
+        gname, gargs = norm_gt[0]
+        ok = call_valid(gname, gargs, actual[0][0], actual[0][1])
+        reason = "ok 1/1" if ok else f"matched 0/1"
     score = 1.0 if ok else 0.0
-    reason = f"ok {matched}/{len(norm_gt)}" if ok else f"matched {matched}/{len(norm_gt)}"
     return {"score": score, "reason": reason, "actual_names": [n for n,_ in actual]}
 
 def main():
@@ -211,7 +221,7 @@ def main():
         if qid in done:
             continue
         try:
-            res = evaluate(q, gt)
+            res = evaluate(q, gt, cat)
         except Exception as e:
             res = {"score": 0.0, "reason": f"crash: {e}", "actual_names": []}
         cp["done_ids"].append(qid)

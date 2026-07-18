@@ -276,7 +276,7 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         // Keep the conversation within the model's context before every request.
         fit_context(history, budget);
         let mut wire = if prompt_tools {
-            flatten_for_prompt_tools(history, &effective_schemas)
+            flatten_for_prompt_tools(history, &effective_schemas, None)
         } else {
             history.clone()
         };
@@ -1107,6 +1107,11 @@ fn tool_grammar(schemas: &Value, root: &str) -> String {
         "call" => {
             g.push_str("root ::= call\n");
         }
+        "done" => {
+            // Iterative loop: model emits ONE call OR the literal DONE to signal completion.
+            g.push_str("root ::= single | done\n");
+            g.push_str("done ::= \"DONE\"\n");
+        }
         "abstain" => {
             g.push_str("root ::= call | abstain\n");
             g.push_str("abstain ::= \"NO_TOOL\"\n");
@@ -1120,6 +1125,13 @@ fn tool_grammar(schemas: &Value, root: &str) -> String {
     g.push_str(&format!(
         "call ::= ( {} ws )? {} ws obj ( ws {} ws obj )* ws {}\n",
         lit("<tool_call>"), lit("["), lit(","), lit("]")
+    ));
+    // single: EXACTLY ONE object — used by the iterative loop so each generation emits one
+    // call (no multi-object runaway). Combined with the `done` root the model either emits
+    // one call or the literal DONE to finish.
+    g.push_str(&format!(
+        "single ::= ( {} ws )? {} ws obj ws {}\n",
+        lit("<tool_call>"), lit("["), lit("]")
     ));
     let mut obj_alts: Vec<String> = Vec::new();
     let mut rules = String::new();
@@ -1171,7 +1183,7 @@ fn tool_grammar(schemas: &Value, root: &str) -> String {
 /// Prompt-tools mode: render the tool set as a text description + the exact call format
 /// the model should emit (what `parse_text_tool_calls` recovers). Used when the server
 /// has no native tool-calling.
-fn tool_prompt(schemas: &Value) -> String {
+fn tool_prompt(schemas: &Value, expected_k: Option<usize>) -> String {
     // The abstention clause differs by mode: with OPENHARN_STRICT_ABSTAIN the grammar
     // forbids free prose, so "no tool fits" must be the literal NO_TOOL sentinel;
     // otherwise the model just answers normally.
@@ -1180,10 +1192,19 @@ fn tool_prompt(schemas: &Value) -> String {
     } else {
         "Otherwise, answer the user normally."
     };
+    let k_hint = match expected_k {
+        Some(1) => "The user's request requires EXACTLY ONE tool call.\n".to_string(),
+        Some(k) => format!(
+            "The user's request requires EXACTLY {k} tool calls (e.g. several independent operations). \
+             You MUST include exactly {k} objects in the array, one per operation.\n"
+        ),
+        None => String::new(),
+    };
     let mut s = format!(
         "You do NOT have a tool API. To call tools, reply with ONLY a tool-call line and nothing else:\n\
           <tool_call>[{{\"name\": \"<tool>\", \"arguments\": {{ ... }}}}]\n\
          Put SEVERAL objects in the array to call multiple tools in one reply (one object per call).\n\n\
+         {k_hint}\
          CRITICAL: If the user request involves MULTIPLE independent operations (e.g., \"sum of X and product of Y\", \"weather in A and B\"), you MUST call multiple tools in one reply by placing multiple objects in the array.\n\n\
          Examples:\n\
          Single call:\n\
@@ -1304,6 +1325,56 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
     let (mut pt_total, mut ct_total) = (0u64, 0u64);
 
+    // Iterative generation (OPENHARN_FC_ITERATE): generate calls one at a time, then feed
+    // each back as context ("you made call X — what remains?"). The model decides the count
+    // naturally, iteration by iteration, WITHOUT needing to pre-count the operations. This is
+    // the right harness shape for small quantized models: each step is a trivial single-call
+    // decision, and the conversation tracks what is already done, so it stops on its own.
+    // The model only emits a call (or, in prompt-tools grammar, the DONE sentinel) each pass.
+    // Falls back to the single-shot path if unset or if iterative produces nothing.
+    let iterate = std::env::var_os("OPENHARN_FC_ITERATE").is_some();
+    if iterate {
+        let mut all_calls: Vec<Value> = Vec::new();
+        let mut iter_msgs: Vec<Value> = messages.to_vec();
+        if !iter_msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
+            iter_msgs.insert(0, json!({ "role": "system", "content": "" }));
+        }
+        let iter_sys_base = "Make ONE tool call per turn to help with the user's request. \
+            After your call you will be told what was done and asked if more work remains. \
+            When no more tool calls are needed, reply with exactly: DONE";
+        if let Some(sys) = iter_msgs.iter_mut().find(|m| m["role"].as_str() == Some("system")) {
+            let base = sys["content"].as_str().unwrap_or("");
+            sys["content"] = json!(format!("{base}\n\n{iter_sys_base}\n\n{}", tool_prompt(tools, None)));
+        }
+        while all_calls.len() < 9 {
+            let wire = iterative_wire(&iter_msgs, &all_calls, prompt_tools, tools);
+            let mut body = json!({
+                "model": cfg.model, "messages": wire,
+                "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
+            });
+            if strict && prompt_tools {
+                body["grammar"] = json!(tool_grammar(tools, "done"));
+            }
+            let (tc, pt, ct) = match try_fc_request(&client, &url, &cfg.api_key, body) {
+                Some(x) => x,
+                None => break,
+            };
+            pt_total += pt; ct_total += ct;
+            if tc.is_empty() { break; } // DONE / no call -> stop the loop
+            let name = tc[0]["function"]["name"].as_str().unwrap_or("").to_string();
+            let args = tc[0]["function"]["arguments"].as_str().unwrap_or("{}").to_string();
+            all_calls.push(tc[0].clone());
+            iter_msgs.push(json!({ "role": "assistant", "content": Value::Null, "tool_calls": tc }));
+            iter_msgs.push(json!({
+                "role": "tool", "tool_call_id": "",
+                "content": format!("Call made: {name}({args}). Are there any REMAINING operations? If none remain, reply DONE.")
+            }));
+        }
+        if !all_calls.is_empty() {
+            return (all_calls, String::new(), pt_total, ct_total);
+        }
+    }
+
     // Pass 1: relevance gate. If it says no tool applies, abstain immediately.
     let mut grammar_root = if abstain { "abstain" } else { "text" };
     if gate {
@@ -1316,72 +1387,36 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
         grammar_root = "call"; // a tool applies → force a schema-valid call
     }
 
-    // Pass 2: the actual (constrained) tool-call generation.
-    // Hybrid approach: try native FC first (stronger on single calls), fall back to
-    // prompt-tools + grammar when native returns nothing (parallel/multi-call cases).
+    // Pass 2: single-shot generation (original behaviour). Hybrid native FC + prompt-tools.
     let mut msgs: Vec<Value> = messages.to_vec();
     if !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
         msgs.insert(0, json!({ "role": "system", "content": "" }));
     }
-
-    // Try both paths and pick the one with more valid calls
     let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
-
     // Path A: native tool-calling (strong for single calls)
-    if !prompt_tools || true {
-        let native_body = make_native_request(cfg, &msgs, tools);
-        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, native_body) {
-            if !tc.is_empty() || candidates.is_empty() {
-                candidates.push((tc, pt, ct));
-            }
-        }
+    if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
+        if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
     }
-
-    // Path B: prompt-tools + strict grammar (for parallel/multi-call cases)
+    // Path B: prompt-tools + strict grammar (parallel/multi-call cases)
     if prompt_tools {
-        let mut pt_msgs = msgs.clone();
-        if prompt_tools && !pt_msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
-            pt_msgs.insert(0, json!({ "role": "system", "content": "" }));
-        }
-        let wire = flatten_for_prompt_tools(&pt_msgs, tools);
+        let wire = flatten_for_prompt_tools(&msgs, tools, None);
         let mut pt_body = json!({
             "model": cfg.model, "messages": wire,
             "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
         });
-        if strict {
-            pt_body["grammar"] = json!(tool_grammar(tools, grammar_root));
-        }
+        if strict { pt_body["grammar"] = json!(tool_grammar(tools, grammar_root)); }
         if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, pt_body) {
-            let mut resolved = tc.clone();
-            if resolved.is_empty() {
-                if let Some(parsed) = candidates.first().and_then(|(c,_,_)| if c.is_empty() { None } else { Some(c) }) {
-                    resolved = parsed.clone();
-                }
-            }
             let existing = candidates.first().map(|(c,_,_)| c.len()).unwrap_or(0);
-            if resolved.len() > existing {
-                if candidates.len() > 1 { candidates.pop(); }
-                candidates.push((resolved, pt, ct));
-            } else if candidates.is_empty() {
-                candidates.push((tc, pt, ct));
-            } else {
-                // Keep existing (native) - it's better
-            }
+            if tc.len() > existing { candidates.truncate(0); candidates.push((tc, pt, ct)); }
+            else if candidates.is_empty() { candidates.push((tc, pt, ct)); }
         }
     }
-
-    // Pick best candidate: most calls, then most tokens (richer output)
     let (mut tool_calls, mut pt_total, mut ct_total) = candidates.into_iter()
         .max_by_key(|(tc, pt, ct)| (tc.len(), *pt + *ct))
         .unwrap_or_default();
-
-    // If we got calls from native path, prefer those; if empty, try text recovery on any content
     let mut content = String::new();
     if tool_calls.is_empty() {
-        if let Some(parsed) = parse_text_tool_calls(&content) {
-            tool_calls = parsed;
-            content.clear();
-        }
+        if let Some(parsed) = parse_text_tool_calls(&content) { tool_calls = parsed; content.clear(); }
     }
     (tool_calls, content, pt_total, ct_total)
 }
@@ -1599,13 +1634,13 @@ fn render_calls_text(tool_calls: &Value) -> String {
 /// plain system/user/assistant messages a tool-unaware server accepts: the tools are
 /// described in the system prompt, assistant tool_calls become their text form, and tool
 /// results become user messages.
-fn flatten_for_prompt_tools(history: &[Value], schemas: &Value) -> Vec<Value> {
+fn flatten_for_prompt_tools(history: &[Value], schemas: &Value, expected_k: Option<usize>) -> Vec<Value> {
     history
         .iter()
         .map(|m| match m["role"].as_str().unwrap_or("") {
             "system" => {
                 let base = m["content"].as_str().unwrap_or("");
-                json!({ "role": "system", "content": format!("{base}\n\n{}", tool_prompt(schemas)) })
+                json!({ "role": "system", "content": format!("{base}\n\n{}", tool_prompt(schemas, expected_k)) })
             }
             "assistant" if m.get("tool_calls").is_some() => {
                 let text = render_calls_text(&m["tool_calls"]);
@@ -1623,6 +1658,31 @@ fn flatten_for_prompt_tools(history: &[Value], schemas: &Value) -> Vec<Value> {
             _ => m.clone(),
         })
         .collect()
+}
+
+/// Wire messages for the iterative generation loop. If calls have already been made,
+/// append a reminder user message ("N call(s) made so far… reply DONE if none remain")
+/// so the model can decide whether to continue. Uses prompt-tools flattening when in
+/// prompt-tools mode, otherwise passes the native message history directly.
+fn iterative_wire(iter_msgs: &[Value], all_calls: &[Value], prompt_tools: bool, tools: &Value) -> Vec<Value> {
+    let base: Vec<Value> = if prompt_tools {
+        flatten_for_prompt_tools(iter_msgs, tools, None)
+    } else {
+        iter_msgs.to_vec()
+    };
+    if all_calls.is_empty() {
+        return base;
+    }
+    let n = all_calls.len();
+    let mut wire = base;
+    wire.push(json!({
+        "role": "user",
+        "content": format!(
+            "{} tool call{} made so far. Complete any REMAINING operations, or reply DONE if none remain.",
+            n, if n == 1 { " was" } else { "s were" }
+        )
+    }));
+    wire
 }
 
 /// In reasoning-off mode a hybrid-thinking model still leaks a (shortened) chain of
@@ -1705,7 +1765,7 @@ mod tests {
                 "function":{"name":"grep","arguments":"{\"pattern\":\"Config\"}"}}]}),
             json!({"role":"tool","tool_call_id":"c0","content":"src/app.py:1: class Config"}),
         ];
-        let wire = flatten_for_prompt_tools(&hist, &tools::schemas());
+        let wire = flatten_for_prompt_tools(&hist, &tools::schemas(), None);
         // system carries the tool descriptions + the call format
         assert!(wire[0]["content"].as_str().unwrap().contains("<tool_call>"));
         assert!(wire[0]["content"].as_str().unwrap().contains("grep"));
@@ -1728,7 +1788,7 @@ mod tests {
             json!({"role":"user","content":"find files"}),
         ];
         let filtered = active_schemas(&Some(vec!["read".into(), "glob".into()]));
-        let wire = flatten_for_prompt_tools(&hist, &filtered);
+        let wire = flatten_for_prompt_tools(&hist, &filtered, None);
         let sys = wire[0]["content"].as_str().unwrap();
         // read and glob must be present
         assert!(sys.contains("read"), "read missing from filtered prompt");
