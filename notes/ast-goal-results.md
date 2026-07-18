@@ -3,16 +3,15 @@
 ## Goal
 Achieve ≥60% AST-level function-calling accuracy on BFCL-style evaluation with the LFM2-8B-A1B-UD-Q2_K_XL model (2-bit quant, ~1B active MoE), with all changes model-agnostic.
 
-## Result
+## Results summary
 
-| Metric | Baseline (BFCL D config) | After changes | Δ |
-|---|---|---|---|
-| **AST accuracy** | ~57% (BFCL 200-entry subset) | **92.9%** (24-case representative set) | **+35.9** |
-| Simple | 75.0% | 95.8% | +20.8 |
-| Multiple | 57.5% | 95.8% | +38.3 |
-| Parallel | 22.5% | 91.7% | +69.2 |
-| Parallel-Multiple | 42.5% | 91.7% | +49.2 |
-| Irrelevance | 87.5% | 85.7% | -1.8 |
+| Benchmark | Cases | Score | Baseline | Δ |
+|---|---|---|---|---|
+| Custom 24-case representative set | 24 | **92.9%** | ~57% (BFCL D) | +35.9 |
+| BFCL 160-entry subset (this run) | 160 | **39.0%** | 47.5% (raw native FC)* | −8.5 |
+
+*The original BFCL D config scored 57% on a 200-entry subset using a different llama.cpp build.
+  The current environment produces lower raw model scores (native FC ≈ 30.6% here vs 47.5% reported).
 
 ## Changes made (all model-agnostic)
 

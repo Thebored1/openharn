@@ -1,0 +1,27 @@
+{
+  "total_questions": 160,
+  "total_answers": 160,
+  "per_category": {
+    "simple_python": {
+      "ids_requested": 40,
+      "questions_found": 40,
+      "answers_found": 40
+    },
+    "multiple": {
+      "ids_requested": 40,
+      "questions_found": 40,
+      "answers_found": 40
+    },
+    "parallel": {
+      "ids_requested": 40,
+      "questions_found": 40,
+      "answers_found": 40
+    },
+    "parallel_multiple": {
+      "ids_requested": 40,
+      "questions_found": 40,
+      "answers_found": 40
+    }
+  },
+  "bfcl_eval_version": "?"
+}

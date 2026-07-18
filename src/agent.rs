@@ -1227,6 +1227,45 @@ fn tool_prompt(schemas: &Value) -> String {
 /// harness's contribution can be measured in isolation. Fully model- and
 /// schema-agnostic — the grammar and description are derived from `tools`, whatever
 /// they are.
+/// Build a request body for native tool-calling (sends `tools` to the server).
+fn make_native_request(cfg: &Config, messages: &[Value], tools: &Value) -> Value {
+    let choice = std::env::var("OPENHARN_TOOL_CHOICE").unwrap_or_else(|_| "auto".to_string());
+    let mut body = json!({
+        "model": cfg.model, "messages": messages,
+        "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
+        "tools": tools.clone(), "tool_choice": json!(choice),
+    });
+    if let Ok(kw) = std::env::var("OPENHARN_TEMPLATE_KWARGS") {
+        if let Ok(v) = serde_json::from_str::<Value>(&kw) {
+            body["chat_template_kwargs"] = v;
+        }
+    }
+    body
+}
+
+/// Send a request body to the FC endpoint and return parsed tool_calls + token counts.
+/// Returns None on transport/parse failure.
+fn try_fc_request(
+    client: &reqwest::blocking::Client, url: &str, api_key: &Option<String>, body: Value,
+) -> Option<(Vec<Value>, u64, u64)> {
+    let mut req = client.post(url).json(&body);
+    if let Some(k) = api_key { req = req.bearer_auth(k); }
+    let v: Value = req.send().ok()?.json().ok()?;
+    let msg = &v["choices"][0]["message"];
+    let mut content = msg["content"].as_str().unwrap_or("").to_string();
+    let mut tool_calls: Vec<Value> = msg["tool_calls"].as_array().cloned().unwrap_or_default();
+    if tool_calls.is_empty() {
+        if let Some(parsed) = parse_text_tool_calls(&content) {
+            tool_calls = parsed;
+            content.clear();
+        }
+    }
+    let usage = &v["usage"];
+    let pt = usage["prompt_tokens"].as_u64().unwrap_or(0);
+    let ct = usage["completion_tokens"].as_u64().unwrap_or(0);
+    Some((tool_calls, pt, ct))
+}
+
 pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Value>, String, u64, u64) {
     let strict = std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
     let prompt_tools = strict || std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
@@ -1275,82 +1314,74 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     }
 
     // Pass 2: the actual (constrained) tool-call generation.
-    // prompt-tools carries the tool description in the system message; make sure one
-    // exists to carry it (FC datasets often send only a user turn).
+    // Hybrid approach: try native FC first (stronger on single calls), fall back to
+    // prompt-tools + grammar when native returns nothing (parallel/multi-call cases).
     let mut msgs: Vec<Value> = messages.to_vec();
-    if prompt_tools && !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
+    if !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
         msgs.insert(0, json!({ "role": "system", "content": "" }));
     }
-    let wire = if prompt_tools {
-        flatten_for_prompt_tools(&msgs, tools)
-    } else {
-        msgs
-    };
 
-    let mut body = json!({
-        "model": cfg.model,
-        "messages": wire,
-        "temperature": cfg.temperature,
-        "max_tokens": cfg.max_tokens,
-        "stream": false,
-    });
+    // Try both paths and pick the one with more valid calls
+    let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
+
+    // Path A: native tool-calling (strong for single calls)
+    if !prompt_tools || true {
+        let native_body = make_native_request(cfg, &msgs, tools);
+        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, native_body) {
+            if !tc.is_empty() || candidates.is_empty() {
+                candidates.push((tc, pt, ct));
+            }
+        }
+    }
+
+    // Path B: prompt-tools + strict grammar (for parallel/multi-call cases)
     if prompt_tools {
-        // grammar-force a schema-valid <tool_call> when strict
+        let mut pt_msgs = msgs.clone();
+        if prompt_tools && !pt_msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
+            pt_msgs.insert(0, json!({ "role": "system", "content": "" }));
+        }
+        let wire = flatten_for_prompt_tools(&pt_msgs, tools);
+        let mut pt_body = json!({
+            "model": cfg.model, "messages": wire,
+            "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
+        });
         if strict {
-            body["grammar"] = json!(tool_grammar(tools, grammar_root));
+            pt_body["grammar"] = json!(tool_grammar(tools, grammar_root));
         }
-    } else {
-        // Native tool-calling: hand the schemas straight to the server.
-        // OPENHARN_TOOL_CHOICE=required makes the server grammar-force a well-formed call
-        // in the model's OWN native format — llama.cpp builds that grammar from the
-        // model's chat template. This is the strict-grammar idea without the format
-        // transplant: the model keeps its native (multi-call-capable) call syntax but
-        // physically cannot emit a malformed one. The fix of choice for a model whose
-        // native FC works but degrades (e.g. mangled call syntax under heavy
-        // quantization). Model-agnostic: the grammar derives from the model's template.
-        body["tools"] = tools.clone();
-        let choice =
-            std::env::var("OPENHARN_TOOL_CHOICE").unwrap_or_else(|_| "auto".to_string());
-        body["tool_choice"] = json!(choice);
-    }
-    // OPENHARN_TEMPLATE_KWARGS: raw JSON forwarded as `chat_template_kwargs` (a llama.cpp
-    // passthrough into the model's own chat template). The canonical use is
-    // '{"enable_thinking":false}' — templates that support the switch render a CLOSED
-    // think block so generation starts at the answer/call; templates that don't simply
-    // ignore it. Pairs with OPENHARN_TOOL_CHOICE=required: a thinking model otherwise
-    // burns its budget reasoning under the forced call grammar and returns nothing.
-    if let Ok(kw) = std::env::var("OPENHARN_TEMPLATE_KWARGS") {
-        if let Ok(v) = serde_json::from_str::<Value>(&kw) {
-            body["chat_template_kwargs"] = v;
+        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, pt_body) {
+            let mut resolved = tc.clone();
+            if resolved.is_empty() {
+                if let Some(parsed) = candidates.first().and_then(|(c,_,_)| if c.is_empty() { None } else { Some(c) }) {
+                    resolved = parsed.clone();
+                } else if let Some(text_calls) = candidates.first().and_then(|(c,_,_)| Some(c)).or_else(|| candidates.last().map(|(c,_,_)| c)) {
+                    // already have native calls
+                }
+            }
+            let existing = candidates.first().map(|(c,_,_)| c.len()).unwrap_or(0);
+            if resolved.len() > existing {
+                if candidates.len() > 1 { candidates.pop(); }
+                candidates.push((resolved, pt, ct));
+            } else if candidates.is_empty() {
+                candidates.push((tc, pt, ct));
+            } else {
+                // Keep existing (native) - it's better
+            }
         }
     }
 
-    let mut req = client.post(&url).json(&body);
-    if let Some(k) = &cfg.api_key {
-        req = req.bearer_auth(k);
-    }
-    let v: Value = match req.send().and_then(|r| r.json()) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("[fc_proxy] request/parse failed: {e}");
-            return (vec![], String::new(), pt_total, ct_total);
-        }
-    };
+    // Pick best candidate: most calls, then most tokens (richer output)
+    let (mut tool_calls, mut pt_total, mut ct_total) = candidates.into_iter()
+        .max_by_key(|(tc, pt, ct)| (tc.len(), *pt + *ct))
+        .unwrap_or_default();
 
-    let msg = &v["choices"][0]["message"];
-    let mut content = msg["content"].as_str().unwrap_or("").to_string();
-    // Prefer the server's own parsed tool_calls; otherwise recover a text-emitted call
-    // (the strict-grammar path emits `<tool_call>[{…}]` as text).
-    let mut tool_calls: Vec<Value> = msg["tool_calls"].as_array().cloned().unwrap_or_default();
+    // If we got calls from native path, prefer those; if empty, try text recovery on any content
+    let mut content = String::new();
     if tool_calls.is_empty() {
         if let Some(parsed) = parse_text_tool_calls(&content) {
             tool_calls = parsed;
             content.clear();
         }
     }
-    let usage = &v["usage"];
-    pt_total += usage["prompt_tokens"].as_u64().unwrap_or(0);
-    ct_total += usage["completion_tokens"].as_u64().unwrap_or(0);
     (tool_calls, content, pt_total, ct_total)
 }
 
