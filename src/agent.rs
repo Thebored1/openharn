@@ -1313,76 +1313,55 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
         grammar_root = "call"; // a tool applies → force a schema-valid call
     }
 
-    // Pass 2: the actual (constrained) tool-call generation.
-    // Hybrid approach: try native FC first (stronger on single calls), fall back to
-    // prompt-tools + grammar when native returns nothing (parallel/multi-call cases).
+    // Pass 2: Reverse Chain decomposition (NAACL 2024 adapted).
+    // Small models cannot decompose N calls in one generation, but can handle
+    // 1 call at a time. So: for each available tool, make an independent FC call
+    // with ONLY that tool available, then combine all results.
+    // This fixes parallel/parallel_multiple without needing multi-call generation.
     let mut msgs: Vec<Value> = messages.to_vec();
     if !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
         msgs.insert(0, json!({ "role": "system", "content": "" }));
     }
 
-    // Try both paths and pick the one with more valid calls
-    let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
+    let mut all_calls: Vec<Value> = Vec::new();
+    let mut pt_total_local = 0u64;
+    let mut ct_total_local = 0u64;
 
-    // Path A: native tool-calling (strong for single calls)
-    if !prompt_tools || true {
-        let native_body = make_native_request(cfg, &msgs, tools);
-        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, native_body) {
-            if !tc.is_empty() || candidates.is_empty() {
-                candidates.push((tc, pt, ct));
+    let try_one = |client: &reqwest::blocking::Client, url: &str, api_key: &Option<String>, body: Value, out_calls: &mut Vec<Value>, pt: &mut u64, ct: &mut u64| {
+        if let Some((tc, p, c)) = try_fc_request(client, url, api_key, body) {
+            *pt += p; *ct += c;
+            out_calls.extend(tc);
+        }
+    };
+
+    // Try each tool independently: small model can handle 1-tool requests
+    for tool in tools.as_array().into_iter().flat_map(|a| a.iter()) {
+        let single_tool = json!([tool]);
+        if prompt_tools {
+            let wire = flatten_for_prompt_tools(&msgs, &single_tool);
+            let mut body = json!({
+                "model": cfg.model, "messages": wire,
+                "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
+            });
+            if strict {
+                body["grammar"] = json!(tool_grammar(&single_tool, grammar_root));
             }
+            try_one(&client, &url, &cfg.api_key, body, &mut all_calls, &mut pt_total_local, &mut ct_total_local);
+        } else {
+            let body = make_native_request(cfg, &msgs, &single_tool);
+            try_one(&client, &url, &cfg.api_key, body, &mut all_calls, &mut pt_total_local, &mut ct_total_local);
         }
     }
 
-    // Path B: prompt-tools + strict grammar (for parallel/multi-call cases)
-    if prompt_tools {
-        let mut pt_msgs = msgs.clone();
-        if prompt_tools && !pt_msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
-            pt_msgs.insert(0, json!({ "role": "system", "content": "" }));
-        }
-        let wire = flatten_for_prompt_tools(&pt_msgs, tools);
-        let mut pt_body = json!({
-            "model": cfg.model, "messages": wire,
-            "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
-        });
-        if strict {
-            pt_body["grammar"] = json!(tool_grammar(tools, grammar_root));
-        }
-        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, pt_body) {
-            let mut resolved = tc.clone();
-            if resolved.is_empty() {
-                if let Some(parsed) = candidates.first().and_then(|(c,_,_)| if c.is_empty() { None } else { Some(c) }) {
-                    resolved = parsed.clone();
-                } else if let Some(text_calls) = candidates.first().and_then(|(c,_,_)| Some(c)).or_else(|| candidates.last().map(|(c,_,_)| c)) {
-                    // already have native calls
-                }
-            }
-            let existing = candidates.first().map(|(c,_,_)| c.len()).unwrap_or(0);
-            if resolved.len() > existing {
-                if candidates.len() > 1 { candidates.pop(); }
-                candidates.push((resolved, pt, ct));
-            } else if candidates.is_empty() {
-                candidates.push((tc, pt, ct));
-            } else {
-                // Keep existing (native) - it's better
-            }
-        }
-    }
+    // Deduplicate: keep one per tool name
+    let mut seen = std::collections::HashSet::new();
+    all_calls.retain(|tc| {
+        let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
+        if name.is_empty() { return false; }
+        seen.insert(name)
+    });
 
-    // Pick best candidate: most calls, then most tokens (richer output)
-    let (mut tool_calls, mut pt_total, mut ct_total) = candidates.into_iter()
-        .max_by_key(|(tc, pt, ct)| (tc.len(), *pt + *ct))
-        .unwrap_or_default();
-
-    // If we got calls from native path, prefer those; if empty, try text recovery on any content
-    let mut content = String::new();
-    if tool_calls.is_empty() {
-        if let Some(parsed) = parse_text_tool_calls(&content) {
-            tool_calls = parsed;
-            content.clear();
-        }
-    }
-    (tool_calls, content, pt_total, ct_total)
+    (all_calls, String::new(), pt_total_local, ct_total_local)
 }
 
 /// Native-template strict generation for the FC-proxy (OPENHARN_NATIVE_TEMPLATE=1).
