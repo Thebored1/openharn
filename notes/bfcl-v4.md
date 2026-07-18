@@ -777,13 +777,47 @@ Matches this morning's LFM2-Q2 (0/5) — these small models can't do multi-turn 
 stop, and no amount of harness selection conjures a right answer that isn't in the
 distribution.
 
-**The one caveat that isn't cope:** this is *trajectory*-level pass@N — the whole 4-turn
-scenario must be right. Verifier-as-selection could instead run *per turn* (N candidates each
-turn, execute, keep the one that advances state, continue). A 4-turn task right 1-in-3 per
-turn is right 1-in-81 as a trajectory but recoverable turn-by-turn. That needs per-turn
-ground truth for the selector (BFCL has it) and state-forking per candidate — a real build,
-and one whose selector leans on labels a deployed system wouldn't have. Untested. But
-trajectory-level, on this model, best-of-N is dead: the wall is generation, again.
+### Per-turn selection: the wall, finally at the root (`tests/bfcl/per_turn_selection.py`)
+
+Trajectory pass@N demands the whole scenario at once. Per-*turn* selection asks less: at each
+turn generate N candidates, execute each against the correct prefix state, and an ORACLE
+selector (BFCL's own `state_checker` vs the ground-truth turn state) keeps any candidate that
+matches. It's a ceiling (the selector uses labels), but it answers the real question — is the
+model's *per-turn* 1-in-N rate high enough to assemble a trajectory. Built it on BFCL's
+executor + state check, committing GT history between turns; N candidates fan out across the 6
+GPU instances.
+
+```
+N=6  : per-turn hit 8/13 (62%)   trajectory 0/3
+N=18 : per-turn hit 8/13 (62%)   trajectory 0/3   — IDENTICAL. 3x the candidates, 0 more turns.
+```
+
+Two hard facts. **(1) The model does 62% of turns fine** — massively more than the 0%
+trajectory score suggests; selection recovers every one of them (winner usually candidate 0).
+**(2) The missed turns are rate-ZERO, not rare** — tripling N to 18 recovers exactly none.
+And they're the *same* turns every time. So trajectory recovery is 0/3 not because chaining is
+unlucky, but because every entry contains ≥1 turn the model simply cannot produce.
+
+What those turns are is the whole investigation in one table:
+
+| | ground-truth calls | |
+|---|---|---|
+| **MISS** (0/18) | `cd; mkdir; mv` · `cd; mv` · `cd; touch` · `cp; cd; mv` | dependent multi-call: navigate **then mutate** |
+| **HIT** | single calls · `cd; grep` (navigate then **read**) | single, or read-after-navigate |
+
+Every rate-0 turn is a **stateful, order-dependent multi-call sequence** — each call depends on
+the prior call's effect (`cd` moves the dir, then `mv`/`mkdir` act relative to it). The model
+can't chain those. This is the **same wall as `parallel_multiple`**: there it *dropped* a call
+from a parallel set; here it can't *sequence* dependent calls. Both are **multi-call
+composition**, and that is the capability the model lacks. Single calls the harness fixes
+(form). Composition it cannot supply, because it isn't in the model's distribution — which is
+why grammar, the gate, MiniCheck, decomposition, and best-of-N all bottomed out at the same
+floor. Per-turn selection is just the instrument that finally isolated it: it extracts 100% of
+what the model can do and 0% of what it can't, and compute doesn't move the second number.
+
+That's the terminal finding. The harness owns *form*, cleanly and with real wins. The model
+owns *composition*, and nothing in the harness — no verifier, no selector, no N — puts it there.
+Only weights do (TinyAgent, 12.71→78.89%).
 
 ## Reproduce
 
