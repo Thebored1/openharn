@@ -959,8 +959,56 @@ OPENHARN_FC_PROXY=1 OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1 OPENHARN_DE
 OPENHARN_MAX_TOKENS=512 ./target/debug/openharn .
 ```
 
+## Does it transfer? MiniCPM-V-4.6 Q4_0 on GPU (and a new flag it forced)
+
+Ran the exact winning config (`NATIVE_TEMPLATE + PLAN_FIRST + DEDUP_CALLS`, no code changes) on
+a *different* model — MiniCPM-V-4.6 Q4_0 — on the RTX 2050. GPU deviation: authorized for this
+run. First on Vulkan, then re-run on CUDA (Vulkan has documented Q4_0 numerical imprecision on
+this box; CUDA is the clean number). Both landed at **60.0% AST** — the Vulkan imprecision didn't
+move the total here, but CUDA is what the numbers below use.
+
+| MiniCPM-Q4 (CUDA) | simple | multiple | parallel | parallel_multiple | AST |
+|---|---|---|---|---|---|
+| winning config | 92.5 | 85.0 | 35.0 | 27.5 | **60.0%** |
+| + `PLAN_ALWAYS` (run A) | 92.5 | 82.5 | 55.0 | 45.0 | **68.75%** |
+| + `PLAN_ALWAYS` (run B) | 87.5 | 82.5 | 42.5 | 37.5 | **62.5%** |
+
+The config transfers — clears 60% — but through the **opposite door** from LFM2: MiniCPM is
+*strong* on single calls (multiple 85 vs LFM2's ~61) and *weak* on composition (parallel 35 vs
+LFM2's ~72). One reason, and it's the plan step: **`PLAN_FIRST` never fired for MiniCPM.** Its
+template opens a `<think>` tag, so native-template used MiniCPM's own thinking, and the
+inject-a-plan branch only runs when there's *no* think tag (LFM2's case). MiniCPM's native think
+doesn't commit to N calls — 22/26 of its parallel misses and 22/25 of its parallel_multiple
+misses were **under-calls** (dropped to a single call).
+
+So I added **`OPENHARN_PLAN_ALWAYS`** (model-agnostic, opt-in): run the same enumeration step
+*after* a thinking model's native think, before the grammar. It works — under-calls fell 23→14
+(parallel) and 23→17 (parallel_multiple), and composition rose: parallel 35→**~49% mean**,
+parallel_multiple 27.5→**~41% mean**, AST 60→**~65.6% mean** (two runs, 68.75 and 62.5). Both
+runs beat the 60% baseline on both composition categories, so the effect is real — but note the
+**variance**: `PLAN_ALWAYS` adds a *second* free-generation phase (think *and* plan), and the two
+compound, so run-to-run swing is wider than the single-phase configs (±3 here vs ±2 for LFM2).
+One lucky run said +8.75; the honest number is +5.6 with more noise. Reporting both because I've
+been burned by a single run in this same file before.
+
+Two honest caveats:
+- **This isn't MiniCPM's best config for composition.** The earlier quant-rescue got MiniCPM-Q4
+  to **72.5%** on `parallel_multiple` with its *own* tuning (`TOOL_CHOICE=required` +
+  `enable_thinking:false`) — letting MiniCPM think *hurts* it under grammar (a finding already up
+  in the quant-rescue section). `PLAN_ALWAYS` recovers some of what thinking costs, but a
+  thinking model may still do better with thinking *off* than with think-then-plan.
+- **LFM2 is untouched.** `PLAN_ALWAYS` is behind its own flag and the plan step was refactored
+  into one shared function called identically on LFM2's (non-thinking) path — byte-identical. A
+  regression re-run on the new binary landed LFM2 at 68.75% (70.0 adjusting for 2 transport-lost
+  entries), inside the 73.75/70.0 band; 29/29 unit tests green.
+
+The unified read across both models: **native presentation unlocks latent parallel ability, and
+an explicit enumeration step is what makes the model commit to N calls — whether the model
+reasons natively (`PLAN_ALWAYS`, thinking models) or not (`PLAN_FIRST`, the rest).** The lever is
+the same; only *where you inject it* depends on the template.
+
 ## Reproduce
 
 [`tests/bfcl/README.md`](../tests/bfcl/README.md) — exact `bfcl generate/evaluate` commands,
 the two-model registration, the subset builder, the failure analyzer, and
-[`run_arm.sh`](../tests/bfcl/run_arm.sh) (one arm end-to-end, used for the table above).
+[`run_arm.sh`](../tests/bfcl/run_arm.sh) (one arm end-to-end, used for the tables above).

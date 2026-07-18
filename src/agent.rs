@@ -1344,6 +1344,49 @@ fn post_json_retry(client: &reqwest::blocking::Client, url: &str, body: &Value) 
     None
 }
 
+/// Unconstrained enumeration pass. Appends a "list EVERY separate tool call" primer, runs one
+/// completion stopped before any JSON, appends the plan and an emit cue to `prompt`. Returns
+/// (prompt_tokens, completion_tokens) deltas. Shared by native-template's plan-first (a
+/// non-thinking model) and PLAN_ALWAYS (also *after* a thinking model's native think phase, so
+/// a reasoning model that under-calls is still pushed to commit to N calls). Model-agnostic:
+/// the primer names no model. The primer/body here are exactly what the non-thinking plan-first
+/// path used before this was factored out, so that path's behaviour is unchanged.
+fn inject_plan(
+    client: &reqwest::blocking::Client,
+    root: &str,
+    prompt: &mut String,
+    cfg: &Config,
+    budget: u64,
+) -> (u64, u64) {
+    let primer = "Before answering, list EVERY separate tool call this request needs, \
+        one per line as `- <tool_name>: <what it does and with which values>`. Put one \
+        line per distinct action; never merge two actions into one line. If the request \
+        asks for N things, there must be N lines.\nPlan:\n";
+    prompt.push_str(primer);
+    let body = json!({
+        "prompt": *prompt,
+        "stop": ["<|im_end|>", "<|tool_call", "[{", "[ {", "\n\n\n"],
+        "n_predict": budget,
+        "temperature": cfg.temperature,
+    });
+    if let Some(rv) = client
+        .post(format!("{root}/completion"))
+        .json(&body)
+        .send()
+        .ok()
+        .and_then(|r| r.json::<Value>().ok())
+    {
+        let plan = rv["content"].as_str().unwrap_or("");
+        let pt = rv["tokens_evaluated"].as_u64().unwrap_or(0);
+        let ct = rv["tokens_predicted"].as_u64().unwrap_or(0);
+        prompt.push_str(plan);
+        prompt.push_str("\nNow emit exactly those calls as a JSON array:\n");
+        (pt, ct)
+    } else {
+        (0, 0)
+    }
+}
+
 fn fc_native_template(
     cfg: &Config,
     messages: &[Value],
@@ -1386,7 +1429,9 @@ fn fc_native_template(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(900);
+    let plan_always = std::env::var_os("OPENHARN_PLAN_ALWAYS").is_some();
     if let Some(tag) = trailing_open_tag(&prompt) {
+        // Reasoning model: let its native think block finish unconstrained, then close it.
         let body = json!({
             "prompt": prompt,
             "stop": [format!("</{tag}>")],
@@ -1406,34 +1451,21 @@ fn fc_native_template(
             prompt.push_str(think);
             prompt.push_str(&format!("</{tag}>\n"));
         }
-    } else if std::env::var_os("OPENHARN_PLAN_FIRST").is_some() {
-        // Elicit a prose enumeration of the required calls, then stop before any JSON /
-        // native tool-call marker so the plan stays free text (the grammar pass does the
-        // real emission). One line per distinct action — the count is the whole point.
-        let primer = "Before answering, list EVERY separate tool call this request needs, \
-            one per line as `- <tool_name>: <what it does and with which values>`. Put one \
-            line per distinct action; never merge two actions into one line. If the request \
-            asks for N things, there must be N lines.\nPlan:\n";
-        prompt.push_str(primer);
-        let body = json!({
-            "prompt": prompt,
-            "stop": ["<|im_end|>", "<|tool_call", "[{", "[ {", "\n\n\n"],
-            "n_predict": think_budget,
-            "temperature": cfg.temperature,
-        });
-        if let Some(rv) = client
-            .post(format!("{root}/completion"))
-            .json(&body)
-            .send()
-            .ok()
-            .and_then(|r| r.json::<Value>().ok())
-        {
-            let plan = rv["content"].as_str().unwrap_or("");
-            pt += rv["tokens_evaluated"].as_u64().unwrap_or(0);
-            ct += rv["tokens_predicted"].as_u64().unwrap_or(0);
-            prompt.push_str(plan);
-            prompt.push_str("\nNow emit exactly those calls as a JSON array:\n");
+        // PLAN_ALWAYS: a reasoning model's native think does not reliably commit to N calls
+        // (measured: MiniCPM under-calls on ~85% of its composition misses). Run the explicit
+        // enumeration pass AFTER the think, before the grammar. Off by default, so the
+        // thinking path — and any prior result on it — is unchanged unless the flag is set.
+        if plan_always {
+            let (dpt, dct) = inject_plan(&client, &root, &mut prompt, cfg, think_budget);
+            pt += dpt;
+            ct += dct;
         }
+    } else if std::env::var_os("OPENHARN_PLAN_FIRST").is_some() || plan_always {
+        // Non-thinking model (template opens straight at the answer): inject the enumeration
+        // step. PLAN_FIRST and PLAN_ALWAYS both trigger it here identically.
+        let (dpt, dct) = inject_plan(&client, &root, &mut prompt, cfg, think_budget);
+        pt += dpt;
+        ct += dct;
     }
 
     // 3. grammar-constrained call
