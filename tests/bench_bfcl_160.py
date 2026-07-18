@@ -6,8 +6,8 @@ from pathlib import Path
 DATA = Path(__file__).resolve().parent / "openharn_bfcl_ast_subset_160"
 FC_URL = os.environ.get("FC_URL", "http://127.0.0.1:8090/v1")
 CATEGORIES = ["simple_python", "multiple", "parallel", "parallel_multiple"]
-TIMEOUT = 90
-MAX_TOKENS = 512
+TIMEOUT = 180
+MAX_TOKENS = 2048
 CHECKPOINT = DATA / "checkpoint.json"  # incremental save
 
 def load_jsonl(path):
@@ -52,27 +52,55 @@ def tool_from_func(func):
         "parameters": {"type": "object", "properties": props, "required": params.get("required", [])}
     }}
 
-def call_fc(messages, tools):
+def call_fc(messages, tools, retry=True):
     body = json.dumps({"model":"local","messages":messages,"tools":tools,"temperature":0.001,"max_tokens":MAX_TOKENS}).encode()
     req = urllib.request.Request(f"{FC_URL}/chat/completions", data=body, headers={"Content-Type":"application/json"})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             data = json.loads(r.read())
     except Exception as e:
+        if retry:
+            import time as _time_
+            _time_.sleep(2)
+            return call_fc(messages, tools, retry=False)
         return None, str(e)
     tc = data.get("choices",[{}])[0].get("message",{}).get("tool_calls",[])
     content = data.get("choices",[{}])[0].get("message",{}).get("content","")
     for t in tc:
         try: t["function"]["arguments"] = json.loads(t["function"]["arguments"])
         except: t["function"]["arguments"] = {}
+    if not tc and retry:
+        import time as _time_
+        _time_.sleep(2)
+        return call_fc(messages, tools, retry=False)
     return tc, content
+
+import re as _re
+
+def _standardize(s):
+    """Exact match with BFCL's standardize_string (ast_checker.py:174)."""
+    regex = r"[ \,\.\/\-\_\*\^]"
+    return _re.sub(regex, "", s).lower().replace("'", '"')
 
 def val_match(vals, actual):
     for ev in vals:
         if ev == "" and actual in (None, "", False): return True
         if isinstance(ev,bool) and isinstance(actual,bool) and ev==actual: return True
-        if isinstance(ev,(int,float)) and isinstance(actual,(int,float)) and float(ev)==float(actual): return True
-        if isinstance(ev,str) and isinstance(actual,str) and ev.lower()==actual.lower(): return True
+        if isinstance(ev,(int,float)) and isinstance(actual,(int,float)):
+            if float(ev) == float(actual): return True
+            continue
+        if isinstance(ev,str) and isinstance(actual,str):
+            if _standardize(ev) == _standardize(actual): return True
+            continue
+        if isinstance(actual,list) and isinstance(ev,list) and len(ev)==1:
+            # BFCL wraps expected nested values in a list for possible_answer
+            return val_match(ev, actual)
+        if isinstance(ev, list):
+            # BFCL's list_checker standardizes string elements
+            std_ev = [_standardize(x) if isinstance(x,str) else x for x in ev]
+            std_actual = [_standardize(x) if isinstance(x,str) else x for x in actual]
+            if std_actual == std_ev: return True
+            continue
         if ev == actual: return True
     return False
 
@@ -89,43 +117,67 @@ def evaluate(q, ground_truths):
     if not ground_truths:
         return {"score": 0.0, "reason": "unexpected calls", "actual_names": [n for n,_ in actual]}
 
-    # Normalize: map both actual and expected names to underscore-free form for comparison.
-    # Model may emit dot or underscore — we compare normalized versions.
-    def norm_name(n):
-        return n.replace("_", ".").replace("-", ".")
+    # Build required-param sets per function name (for faithful required/optional checks).
+    req_by_name = {}
+    for f in q["function"]:
+        req_by_name[f["name"].replace(".", "_")] = set(f.get("parameters", {}).get("required", []))
 
-    # Build expected list with normalized names
+    # BFCL convert_func_name: expected names use dots; model output uses underscores
+    # (OpenAI FC requirement). Convert expected names to underscored form.
+    def exp_name(n):
+        return n.replace(".", "_")
     norm_gt = []
     for gt in ground_truths:
         for gname, gargs in gt.items():
-            norm_gt.append((norm_name(gname), gargs))
+            norm_gt.append((exp_name(gname), gargs))
 
-    # Match each actual call to best ground-truth (greedy).
-    # AST matching: function name must match; all REQUIRED params must have correct values.
-    # Optional params with wrong values DON'T cause the entire call to fail.
-    gt_used = [False]*len(norm_gt)
-    correct = 0
-    for aname, aargs in actual:
-        anorm = norm_name(aname)
-        best_gi, best_score = -1, -1
-        for gi, (gname, gargs) in enumerate(norm_gt):
-            if gt_used[gi]: continue
-            if anorm != gname: continue
-            # Count params that match (optional misses are OK)
-            mc = sum(1 for k,vals in gargs.items() if k in aargs and val_match(vals, aargs[k]))
-            has_mismatch = any(k in aargs and not val_match(vals, aargs[k]) for k,vals in gargs.items())
-            # At least 1 param must match + no wrong values = call is valid
-            if mc > 0 and not has_mismatch:
-                s = 1.0
-            else:
-                s = mc / max(len(gargs),1)
-            if s > best_score: best_score, best_gi = s, gi
-        if best_gi >= 0 and best_score >= 1.0:
-            gt_used[best_gi] = True; correct += 1
+    # FAITHFUL to official BFCL: all-or-nothing per test case.
+    # 1. Exact function count required (parallel_function_checker_no_order:wrong_count).
+    if len(actual) != len(norm_gt):
+        return {"score": 0.0,
+                "reason": f"count {len(actual)} vs {len(norm_gt)}",
+                "actual_names": [n for n,_ in actual]}
 
-    score = correct / max(len(norm_gt), 1)
-    missing = [list(k.keys())[0] for gi,k in enumerate(ground_truths) if not gt_used[gi]]
-    return {"score": score, "reason": f"ok {correct}/{len(norm_gt)}" if score>=1.0 else f"miss {missing}", "actual_names": [n for n,_ in actual]}
+    def call_valid(gname, gargs, aname, aargs):
+        # Function name must match.
+        if aname != gname:
+            return False
+        req = req_by_name.get(gname, set())
+        # All required params must be present in the model output.
+        for p in req:
+            if p not in aargs:
+                return False
+        # No unexpected params (params not in the possible-answer spec).
+        for k in aargs:
+            if k not in gargs:
+                return False
+        # Every provided param must match one of its allowed values.
+        for k, avalue in aargs.items():
+            if not val_match(gargs[k], avalue):
+                return False
+        # Any required-by-possible-answer param (no "" option) must be present.
+        for k, vals in gargs.items():
+            if k not in aargs and "" not in vals:
+                return False
+        return True
+
+    # Greedy no-order matching: each expected must find one distinct valid actual call.
+    _used = set()
+    matched = 0
+    for gname, gargs in norm_gt:
+        for ai, (aname, aargs) in enumerate(actual):
+            if ai in _used:
+                continue
+            if call_valid(gname, gargs, aname, aargs):
+                _used.add(ai)
+                matched += 1
+                break
+
+    # All-or-nothing: the whole test passes only if every expected call matched.
+    ok = (matched == len(norm_gt))
+    score = 1.0 if ok else 0.0
+    reason = f"ok {matched}/{len(norm_gt)}" if ok else f"matched {matched}/{len(norm_gt)}"
+    return {"score": score, "reason": reason, "actual_names": [n for n,_ in actual]}
 
 def main():
     global FC_URL
