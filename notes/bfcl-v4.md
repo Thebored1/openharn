@@ -755,6 +755,36 @@ best-of-{implicit, decompose} with a **reliable selector** keeps both — up to 
 alone. The selector needs a literal signal (execution), which only exists on agentic tasks.
 Which is the next section.
 
+## Verifier-as-selector: pass@6 = 0
+
+The one honest use of the reliable (execution) verifier is as a *selector*, not a checker:
+generate N diverse candidates, execute each, keep the one that satisfies. A verifier can't
+write a right plan but it can pick one. The bet: if the model is right 1-in-N, best-of-N +
+the verifier recovers it. So the gating question is the model's 1-in-N rate, and that's cheap
+to measure — the 6 GPU instances are 6 parallel attempts for free.
+
+multi_turn_base ×3, 6 attempts each at temp 0.7 (diversity — the opposite of the determinism
+config; best-of-N wants spread). BFCL's state check is the selector.
+
+```
+per-attempt accuracy:  0% 0% 0% 0% 0% 0%
+pass@1 = 0/3     pass@6 = 0/3     correct candidates: 0/18
+```
+
+Zero. The model never produces a correct multi-turn trajectory in 6 diverse tries, so there
+is nothing to select. best-of-N with a perfect verifier is still 0 when all N are wrong.
+Matches this morning's LFM2-Q2 (0/5) — these small models can't do multi-turn agentic, full
+stop, and no amount of harness selection conjures a right answer that isn't in the
+distribution.
+
+**The one caveat that isn't cope:** this is *trajectory*-level pass@N — the whole 4-turn
+scenario must be right. Verifier-as-selection could instead run *per turn* (N candidates each
+turn, execute, keep the one that advances state, continue). A 4-turn task right 1-in-3 per
+turn is right 1-in-81 as a trajectory but recoverable turn-by-turn. That needs per-turn
+ground truth for the selector (BFCL has it) and state-forking per candidate — a real build,
+and one whose selector leans on labels a deployed system wouldn't have. Untested. But
+trajectory-level, on this model, best-of-N is dead: the wall is generation, again.
+
 ## Reproduce
 
 [`tests/bfcl/README.md`](../tests/bfcl/README.md) — exact `bfcl generate/evaluate` commands,
