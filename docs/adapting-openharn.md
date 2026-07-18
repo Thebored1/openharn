@@ -44,7 +44,9 @@ No rebuild needed. Set these before launching openharn.
 | `OPENHARN_FC_GATE` | (FC-proxy, strict) two-pass: a YES/NO relevance pre-pass decides call-vs-abstain, then a call is FORCED when a tool applies | separate the *should-I-call* judgment from the *emit-a-valid-call* mechanics — forces calls on relevant inputs without over-calling on irrelevant ones |
 | `OPENHARN_TOOL_CHOICE` | (FC-proxy, native path) forwarded as `tool_choice`; `required` makes the server grammar-force a well-formed call in the model's OWN native format (llama.cpp derives the grammar from the model's chat template) | a model whose native FC works but *degrades* — e.g. mangles its own call syntax under heavy quantization. Forces a call, so pair with the gate on abstention workloads |
 | `OPENHARN_TEMPLATE_KWARGS` | raw JSON forwarded as `chat_template_kwargs` into the model's chat template; canonical use `'{"enable_thinking":false}'` (no-op on templates without the switch) | a thinking model burns its budget reasoning — especially under `TOOL_CHOICE=required`, where mid-think truncation returns nothing |
-| `OPENHARN_NATIVE_TEMPLATE` | (FC-proxy, experimental) render via the server's `/apply-template` (native tool presentation), complete any open think tag unconstrained, then grammar-force openharn's `<tool_call>[…]` array; falls back to prompt-tools if the endpoint is absent | native FC absent AND prompt-tools flattening breaks the model. Caveat: the foreign array format suppresses some models' multi-call habit — prefer `TOOL_CHOICE=required` when native FC exists |
+| `OPENHARN_NATIVE_TEMPLATE` | (FC-proxy, experimental) render via the server's `/apply-template` (native tool presentation), complete any open think tag unconstrained, then grammar-force openharn's `<tool_call>[…]` array; falls back to prompt-tools if the endpoint is absent | native FC absent, OR prompt-tools *flattening* is hiding a multi-call model's ability (BFCL: it lifts LFM2-Q2 `parallel` 17→52% by restoring the native tool presentation — see `notes/bfcl-v4.md`). Grammar-from-token-0 taxes single calls, so pair with `PLAN_FIRST` |
+| `OPENHARN_PLAN_FIRST` | (native-template, non-thinking models) inject an explicit UNconstrained planning step — "list every separate tool call, one per line" — before the constrained emission. The two-pass decouple that pays back the constraint tax and makes the model *commit* to N calls | a model whose template has no think tag but drops calls / under-decomposes under a grammar (BFCL: `parallel` 52→68%, recovers the single-call tax). Usually paired with `DEDUP_CALLS` |
+| `OPENHARN_DEDUP_CALLS` | drop exact-duplicate tool calls (same name + same argument string) before returning | a model repeats a call under the forced array grammar (common with `PLAN_FIRST`) and the extra copy is scored wrong. Unsafe for the rare task that legitimately needs the identical call twice — hence opt-in |
 
 `NARROW` implies `STRICT_TOOLS`; `STRICT_TOOLS` implies `PROMPT_TOOLS` (a grammar can't
 combine with the native `tools` field). `NO_THINK` is ignored under strict (its prefill
@@ -161,29 +163,32 @@ grounding raise the floor and the circuit breaker stops the spiral, but they can
 competence the model lacks. Which families clear that bar on CPU:
 [`small-model-tool-calling.md`](../notes/small-model-tool-calling.md).
 
-### The hard wall: multi-call composition
+### Multi-call composition: which part the harness moves, which it doesn't
 
-The one deficit no mode in this guide fixes is **composing more than one call**. Measured on
+There are two kinds of "more than one call," and they are **not** the same wall. Measured on
 BFCL v4 (see [`../notes/bfcl-v4.md`](../notes/bfcl-v4.md)):
 
 - **Single call** — the model is fine on its own. A 2-bit LFM2-8B-A1B scores ~80% on
-  `simple` and `multiple` *raw*, no harness. Grammar barely moves it (and can cost a few
-  points via overhead). Don't reach for strict mode to fix single calls; it isn't broken.
-- **Two or more calls at once** (`parallel`, `parallel_multiple`) — the same model scores a
-  literal **0% raw**. The harness lifts it to ~22% / ~42% by fixing *form* (forcing valid
-  syntax, killing the whitespace runaway that dropped calls), but it plateaus there.
-- **Dependent calls in sequence** (agentic `cd; mkdir; mv`, and cross-call shared values like
-  a `principal=5000` stated once but needed by two calls) — not fixed at all.
+  `simple`/`multiple` *raw*. Grammar-from-token-0 actually *taxes* single calls (the
+  "constraint tax," Li et al. arXiv:2606.25605) — so `NATIVE_TEMPLATE` alone drops them; pair
+  it with `PLAN_FIRST` to pay the tax back.
+- **Independent parallel calls** (`parallel`, `parallel_multiple`) — the harness **does** move
+  this, further than an earlier version of this doc claimed. The capability is *latent in the
+  weights*; the default `prompt-tools` path was **suppressing** it by flattening away the native
+  tool presentation. Restore the native presentation (`NATIVE_TEMPLATE`), add a plan buffer
+  (`PLAN_FIRST`), strip duplicate emissions (`DEDUP_CALLS`), and LFM2-Q2 goes `parallel`
+  **17.5 → 72.5%**, the whole AST subset **45 → ~72%** — replicated, same 2-bit model, same CPU.
+  The wins are still *form-shaped*: don't hide the format, don't constrain before the model has
+  committed, clean the emission. No new capability is injected — the harness just stops hiding
+  what the weights already had.
+- **Dependent calls in sequence** (agentic `cd; mkdir; mv`, and cross-call shared values like a
+  `principal=5000` stated once but needed by a second call) — **still not fixed.** This is the
+  real weights wall. Feeding the model oracle-correct history before each turn (a perfect
+  external memory) still yields a 0% hit rate on dependent multi-call turns, so an external
+  scratchpad/memory does not rescue it either: the missing piece is *authoring the dependency*,
+  not storing it.
 
-Why no knob helps: strictness fixes the *shape* of a call, not the *judgment* to know a
-second call is owed and to route the right argument into it. That judgment lives in the
-weights. We confirmed it two ways — (1) grammar, relevance gates, decomposition, and
-best-of-N all plateau at the same ceiling; (2) feeding the model **oracle-correct history**
-before each turn (a perfect external memory) still yields a 0% hit rate on dependent
-multi-call turns. So an external scratchpad / "memory" layer does **not** rescue this: the
-missing piece is the *author of the plan*, not a place to store it.
-
-What *does* move it: better weights. Higher bit-depth is the first dial — the same MiniCPM
-model does multi-call at ~82% at Q8 but ~47% at Q4; composition is the first capability
-quantization eats. Task-specific fine-tuning is the other (cf. TinyAgent, 12.7% → 78.9%).
-If your job needs reliable multi-step tool use, spend there, not on harness knobs.
+What moves the dependent wall: better weights — higher bit-depth (MiniCPM does multi-call ~82%
+at Q8 vs ~47% at Q4; composition is the first thing quantization eats) or task-specific
+fine-tuning (TinyAgent, 12.7 → 78.9%). But before spending there, make sure your harness isn't
+suppressing latent parallel ability the way the flattening path was — that was free.

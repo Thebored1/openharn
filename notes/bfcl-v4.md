@@ -819,7 +819,152 @@ That's the terminal finding. The harness owns *form*, cleanly and with real wins
 owns *composition*, and nothing in the harness — no verifier, no selector, no N — puts it there.
 Only weights do (TinyAgent, 12.71→78.89%).
 
+## The wall moved — I was wrong that it was terminal
+
+Everything above this line called multi-call composition a model-capability wall that "nothing
+in the harness puts there, only weights do." That was too strong, and this section walks back
+the overconfident half of it with numbers that replicate. The composition capability **was in
+LFM2-Q2's weights the whole time** — the harness config I was measuring (`prompt-tools`, which
+*flattens* the tool list into a text blob) was itself **suppressing** it. Give the model its
+native tool presentation back, add a cheap reasoning buffer, and strip the duplicate calls, and
+parallel goes 17.5 → 72.5 and the AST subset goes **45 → ~72%**. On the same 2-bit model, same
+CPU box.
+
+I only found this because the goal was reset to "get ≥60% AST, and research every decision
+instead of pulling it out of your ass." So I did the reading first. Three papers, all
+inference-time and model-agnostic (finetuning is off the table — that's TinyAgent's answer, not
+ours):
+
+- **Tool Suppression / the "constraint tax"** — Li, Zhang, Lv, *arXiv:2606.25605*. Reproduces
+  exactly what I'd been eating: when a JSON/grammar constraint is compiled to a token mask,
+  tool-call tokens go *unreachable* and the model's action selection degrades under the
+  constraint even though it can call fine unconstrained. Their fix is a **two-pass decouple** —
+  reason free, *then* constrain. This is why `simple`/`multiple` sat *below* raw in every
+  strict config: grammar-from-token-0.
+- **Adapt schemas to the model, not the model to schemas** — Lee et al., ACL 2026,
+  *arXiv:2510.07248* (PA-Tool). Small models fail tool use when the tool *presentation*
+  mismatches what they saw in pretraining. Our `prompt-tools` flattening is precisely that
+  mismatch — it throws away the `<|tool_list_start|>…<|tool_list_end|>` framing LFM2 was
+  trained on.
+- **Plan-then-emit** — LLMCompiler (Kim et al., ICML 2024) and guided-structured templates
+  (Dang et al., EMNLP 2025, *arXiv:2509.18076*): make the model enumerate the calls first. The
+  call grammar *already* permits an N-object array (`call ::= "[" obj ("," obj)* "]"` — checked
+  the code, parallel was never grammar-capped), so a plan is all that's needed to make the model
+  *commit* to N calls instead of dropping to 1.
+
+### What I changed (model-agnostic, all opt-in)
+
+- **`OPENHARN_NATIVE_TEMPLATE`** already existed (renders the model's own template via
+  `/apply-template`, reasons if the template opens a think tag, then grammar-forces the call).
+  It had never been run on LFM2-Q2's AST subset — only on the MiniCPM quant-rescue. Running it
+  *is* the "native presentation" arm.
+- **`OPENHARN_PLAN_FIRST`** (new) — for a model whose template has **no** think tag (LFM2's
+  assistant turn opens straight at the answer, checked via `/apply-template`), inject an
+  explicit unconstrained planning step: "list EVERY separate tool call, one per line," stop
+  before any JSON, append it, *then* run the constrained call. This is the two-pass decouple for
+  a non-thinking model. The primer names no model; the tag is read from the template.
+- **`OPENHARN_DEDUP_CALLS`** (new) — drop exact-duplicate calls (same name + same argument
+  string). Plan-first makes LFM2 *repeat* calls under the forced array grammar (it lists the
+  plan, then re-emits — see the trace below), which the checker scores `wrong_count`.
+- **Transport retry** (always on) — 3 attempts on a dropped/refused connection instead of
+  silently returning no call. Not cosmetic: native-template makes 2–3 requests/entry and
+  llama-server's accept queue flakes under `--num-threads 4` — one run logged **64 recovered
+  flakes**. Without retry the baseline was being depressed by the harness's own dropped
+  connections, not the model.
+
+### Results — LFM2-8B-A1B UD-Q2_K_XL, 160-entry AST subset, CPU (`-ngl 0`)
+
+All arms on one binary, one llama-server session, `temp 0.001`, `--num-threads 4`.
+
+| Category | D (prompt-tools+gate) | H1 native-template | H2 +plan-first | **H2 +plan +dedup** |
+|---|---|---|---|---|
+| simple_python (40) | 70.0 | 55.0 | 60.0 | **87.5 / 80.0** |
+| multiple (40) | 55.0 | 45.0 | 52.5 | **62.5 / 60.0** |
+| parallel (40) | 17.5 | 52.5 | 67.5 | **75.0 / 70.0** |
+| parallel_multiple (40) | 37.5 | 55.0 | 57.5 | **70.0 / 70.0** |
+| **AST total** | **45.0%** | **51.9%** | **59.4%** | **73.75% / 70.0%** |
+
+The winning arm is shown as **run A / run B** — two independent full runs, because I got burned
+earlier in this same file by an 85% number that didn't replicate. It replicates: 73.75 and 70.0,
+mean **71.9% AST**, both clearing 60 by 10+ points. Variance is ±4, the same temp-0.001 CPU
+non-determinism documented up top.
+
+Read the columns left to right — it's a clean decomposition of *why* it works:
+
+- **native presentation alone (H1)** is the big composition unlock: parallel **17.5 → 52.5**,
+  parallel_multiple **37.5 → 55**. That's the PA-Tool effect measured — the capability was
+  latent, flattening was hiding it. But it *taxes the single-call categories* (simple 70 → 55,
+  multiple 55 → 45): grammar-from-token-0 with no reasoning buffer, exactly Li et al.'s tax.
+- **plan-first (H2)** pays the tax back and pushes further: it gives the non-thinking model the
+  reasoning buffer, so singles recover (55 → 60, 45 → 52.5) *and* the explicit N-commitment
+  lifts parallel again (52.5 → **67.5**). 59.4% — one entry short of target.
+- **dedup** clears it and then some. Plan-first's cost is that LFM2 repeats calls; removing the
+  repeats fixes `wrong_count` across the board (+11 on simple alone in run A). This is the last
+  +12–14 points.
+
+### The mechanism, concretely
+
+Plan-first output for `parallel_0` ("play Taylor Swift 20m and Maroon 5 15m"), verbatim from
+LFM2-Q2:
+
+```
+1. Play Taylor Swift for 20 minutes → call `spotify_play` with artist="Taylor Swift" and duration=20.
+2. Play Maroon 5 for 15 minutes → call `spotify_play` with artist="Maroon 5" and duration=15.
+3. No additional tools are needed; each call is explicit and distinct.
+4. Execute both calls.
+​```
+spotify_play: {"artist": "Taylor Swift", "duration": 20}
+spotify_play: {"artist": "Maroon 5", "duration": 15}
+​```
+```
+
+That's the whole thing. The model *can* enumerate two distinct calls — it says so explicitly
+("each call is explicit and distinct"). What it couldn't do was emit them when the grammar
+clamped from token 0 (H1's tax) or when flattening hid the native format (D's parallel 0–17%).
+Note the tail: it starts re-emitting the calls, which is the duplicate source dedup mops up. The
+grammar pass that follows produces the clean `[{…},{…}]` array; the checker sees two correct
+distinct calls (verified in the result files: parallel_0/1/2/3 all pass with genuinely distinct
+args, not dedup artifacts).
+
+### Caveats — read these before believing the headline
+
+- **`multiple` never fully recovers** (62.5/60 vs ~82.5 raw native FC). The constraint tax on
+  single-tool-choice-among-many is only *partly* paid back by plan-first. If you only care about
+  single calls, raw native FC still wins there — the harness's edge is composition.
+- **dedup has one known false positive**: BFCL contains exactly one entry (`parallel_158`) whose
+  correct answer *is* the same call twice with identical args. dedup would break it. It is not in
+  this subset (checked), and dedup is **opt-in** and off by default, so the coding agent is
+  unaffected — but the flag is unsafe for the rare genuine identical-repeat call.
+- **Deviations from the CPU-first thesis: none this run** (that's the point — it's `-ngl 0`,
+  same box, same quant as the 45% baseline). The only non-defaults are `--num-threads 4` + the
+  transport retry, both documented above; retry is what makes the 4-thread number trustworthy.
+- **This does not resurrect the *agentic* multi_turn wall.** Those failures are *dependent,
+  order-sensitive* sequences (`cd` then `mv`), a different and harder thing than a *parallel* set
+  of independent calls. plan-first was not tested there and I would not expect it to clear that —
+  the per-turn rate-0 finding above stands until measured otherwise.
+
+### What this does to the thesis
+
+"Harness owns form, weights own composition" was half right. Better: **the harness can suppress
+or unlock latent composition, and the default prompt-tools path was suppressing it.** The wins
+are still form-shaped underneath — native presentation (don't destroy the format), a plan buffer
+(don't constrain before the model has committed), and dedup (clean the emission). None of it is
+new capability injected into the model; it's *stopping the harness from hiding capability the
+weights already had.* That is a materially more useful statement than "only finetuning moves it,"
+and it's the one the numbers support. `parallel_multiple_27`-style **dependent** composition
+(shared value produced by one call, needed by another) is still unmoved — that one really is a
+weights problem, and it's the honest remaining wall.
+
+Winning config (BFCL AST, ≥60% target cleared at ~72%):
+
+```sh
+OPENHARN_BASE_URL=http://127.0.0.1:8080/v1 OPENHARN_SERVE=1 OPENHARN_SERVE_PORT=8090 \
+OPENHARN_FC_PROXY=1 OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1 OPENHARN_DEDUP_CALLS=1 \
+OPENHARN_MAX_TOKENS=512 ./target/debug/openharn .
+```
+
 ## Reproduce
 
 [`tests/bfcl/README.md`](../tests/bfcl/README.md) — exact `bfcl generate/evaluate` commands,
-the two-model registration, the subset builder, and the failure analyzer.
+the two-model registration, the subset builder, the failure analyzer, and
+[`run_arm.sh`](../tests/bfcl/run_arm.sh) (one arm end-to-end, used for the table above).

@@ -777,6 +777,25 @@ fn stream_response(
 /// list `[{"name":…, "arguments":{…}}]` — and returns OpenAI-format tool_calls (with
 /// `arguments` as a JSON string, as the dispatcher expects). Returns None if `content`
 /// isn't a recognizable tool call, so a normal answer is never misread as one.
+/// Drop exact-duplicate tool calls (same name + same argument string), keeping first
+/// occurrence and order. A weak model under a forced-call grammar sometimes repeats the
+/// same call (measured on BFCL: `multiple_3` emits the one Euclidean-distance call twice,
+/// `parallel_multiple_20` repeats `median`), which the AST checker scores as `wrong_count`.
+/// Identical-argument repeats are never a legitimate parallel call, so removing them is
+/// safe. Opt-in (OPENHARN_DEDUP_CALLS) so the coding agent's default behaviour is unchanged.
+fn dedup_tool_calls(calls: &mut Vec<Value>) {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    calls.retain(|c| {
+        let f = &c["function"];
+        let key = format!(
+            "{}|{}",
+            f["name"].as_str().unwrap_or(""),
+            f["arguments"].as_str().unwrap_or("")
+        );
+        seen.insert(key)
+    });
+}
+
 fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
     let mut s = content.trim();
     for marker in ["<|tool_call|>", "```"] {
@@ -1254,16 +1273,27 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
         }
     }
 
-    let mut req = client.post(&url).json(&body);
-    if let Some(k) = &cfg.api_key {
-        req = req.bearer_auth(k);
-    }
-    let v: Value = match req.send().and_then(|r| r.json()) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("[fc_proxy] request/parse failed: {e}");
-            return (vec![], String::new(), pt_total, ct_total);
+    // Retry on transport error: a dropped/refused connection (seen under concurrent load
+    // against llama-server, whose HTTP accept queue can fill) must not silently drop a
+    // valid call — same fail-safe stance as the relevance gate. Up to 3 attempts.
+    let v: Value = 'req: {
+        let mut last = String::new();
+        for attempt in 0..3u32 {
+            let mut req = client.post(&url).json(&body);
+            if let Some(k) = &cfg.api_key {
+                req = req.bearer_auth(k);
+            }
+            match req.send().and_then(|r| r.json::<Value>()) {
+                Ok(v) => break 'req v,
+                Err(e) => {
+                    last = e.to_string();
+                    eprintln!("[fc_proxy] request/parse failed (attempt {}): {e}", attempt + 1);
+                    std::thread::sleep(std::time::Duration::from_millis(400 * (attempt as u64 + 1)));
+                }
+            }
         }
+        eprintln!("[fc_proxy] giving up after 3 attempts: {last}");
+        return (vec![], String::new(), pt_total, ct_total);
     };
 
     let msg = &v["choices"][0]["message"];
@@ -1280,6 +1310,9 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let usage = &v["usage"];
     pt_total += usage["prompt_tokens"].as_u64().unwrap_or(0);
     ct_total += usage["completion_tokens"].as_u64().unwrap_or(0);
+    if std::env::var_os("OPENHARN_DEDUP_CALLS").is_some() {
+        dedup_tool_calls(&mut tool_calls);
+    }
     (tool_calls, content, pt_total, ct_total)
 }
 
@@ -1296,6 +1329,21 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
 ///
 /// Returns None when the server has no /apply-template (non-llama.cpp endpoints), letting
 /// the caller fall back to the standard prompt-tools path.
+/// POST JSON with up to 3 attempts on transport error (see the fc_proxy retry rationale).
+/// Returns None only after all attempts fail — callers treat that as "endpoint unavailable".
+fn post_json_retry(client: &reqwest::blocking::Client, url: &str, body: &Value) -> Option<Value> {
+    for attempt in 0..3u32 {
+        match client.post(url).json(body).send().and_then(|r| r.json::<Value>()) {
+            Ok(v) => return Some(v),
+            Err(e) => {
+                eprintln!("[native-template] POST {url} failed (attempt {}): {e}", attempt + 1);
+                std::thread::sleep(std::time::Duration::from_millis(400 * (attempt as u64 + 1)));
+            }
+        }
+    }
+    None
+}
+
 fn fc_native_template(
     cfg: &Config,
     messages: &[Value],
@@ -1321,12 +1369,24 @@ fn fc_native_template(
     let v: Value = resp.json().ok()?;
     let mut prompt = v["prompt"].as_str()?.to_string();
 
-    // 2. thinking phase — detected from the template itself, not the model name
+    // 2. reason-first phase. Two sources:
+    //   (a) the template itself opens a think tag (`<think>` etc.) — a reasoning model;
+    //   (b) OPENHARN_PLAN_FIRST is set and the template does NOT open a tag — a
+    //       non-thinking model (e.g. LFM2, whose template starts the assistant turn at
+    //       the answer). We inject an explicit, UNconstrained planning step.
+    // Both decouple free reasoning from the grammar-constrained emission that follows.
+    // Rationale (cited): constraining tokens from step 0 masks tool-call paths and
+    // suppresses/degrades calls — the "constraint tax" / tool suppression (Li et al.,
+    // arXiv:2606.25605); the mitigation is a two-pass decouple. The plan-then-emit shape
+    // is LLMCompiler's planner (Kim et al., ICML 2024) and guided-structured templates
+    // (arXiv:2509.18076). The call grammar already permits an N-object array; the plan is
+    // what makes the model COMMIT to N calls (its raw parallel rate is ~0 without it).
+    // Model-agnostic: the tag is read from the template, the primer names no model.
+    let think_budget: u64 = std::env::var("OPENHARN_THINK_BUDGET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(900);
     if let Some(tag) = trailing_open_tag(&prompt) {
-        let think_budget: u64 = std::env::var("OPENHARN_THINK_BUDGET")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(900);
         let body = json!({
             "prompt": prompt,
             "stop": [format!("</{tag}>")],
@@ -1346,6 +1406,34 @@ fn fc_native_template(
             prompt.push_str(think);
             prompt.push_str(&format!("</{tag}>\n"));
         }
+    } else if std::env::var_os("OPENHARN_PLAN_FIRST").is_some() {
+        // Elicit a prose enumeration of the required calls, then stop before any JSON /
+        // native tool-call marker so the plan stays free text (the grammar pass does the
+        // real emission). One line per distinct action — the count is the whole point.
+        let primer = "Before answering, list EVERY separate tool call this request needs, \
+            one per line as `- <tool_name>: <what it does and with which values>`. Put one \
+            line per distinct action; never merge two actions into one line. If the request \
+            asks for N things, there must be N lines.\nPlan:\n";
+        prompt.push_str(primer);
+        let body = json!({
+            "prompt": prompt,
+            "stop": ["<|im_end|>", "<|tool_call", "[{", "[ {", "\n\n\n"],
+            "n_predict": think_budget,
+            "temperature": cfg.temperature,
+        });
+        if let Some(rv) = client
+            .post(format!("{root}/completion"))
+            .json(&body)
+            .send()
+            .ok()
+            .and_then(|r| r.json::<Value>().ok())
+        {
+            let plan = rv["content"].as_str().unwrap_or("");
+            pt += rv["tokens_evaluated"].as_u64().unwrap_or(0);
+            ct += rv["tokens_predicted"].as_u64().unwrap_or(0);
+            prompt.push_str(plan);
+            prompt.push_str("\nNow emit exactly those calls as a JSON array:\n");
+        }
     }
 
     // 3. grammar-constrained call
@@ -1355,19 +1443,18 @@ fn fc_native_template(
         "n_predict": cfg.max_tokens,
         "temperature": cfg.temperature,
     });
-    let rv: Value = client
-        .post(format!("{root}/completion"))
-        .json(&body)
-        .send()
-        .ok()?
-        .json()
-        .ok()?;
+    let rv: Value = post_json_retry(&client, &format!("{root}/completion"), &body)?;
     let content = rv["content"].as_str().unwrap_or("").to_string();
     pt += rv["tokens_evaluated"].as_u64().unwrap_or(0);
     ct += rv["tokens_predicted"].as_u64().unwrap_or(0);
 
     match parse_text_tool_calls(&content) {
-        Some(calls) => Some((calls, String::new(), pt, ct)),
+        Some(mut calls) => {
+            if std::env::var_os("OPENHARN_DEDUP_CALLS").is_some() {
+                dedup_tool_calls(&mut calls);
+            }
+            Some((calls, String::new(), pt, ct))
+        }
         None => Some((vec![], content, pt, ct)),
     }
 }
@@ -1544,11 +1631,10 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn active_schemas_filters_and_grammar_constrains() {
         let s = active_schemas(&Some(vec!["glob".into()]));
         assert_eq!(s.as_array().unwrap().len(), 1, "only glob kept");
-        let g = tool_grammar(&s);
+        let g = tool_grammar(&s, "text");
         // the grammar names glob and its real args, and has a text escape hatch
         assert!(g.contains("root ::= call | text"));
         assert!(g.contains(r#""\"glob\"""#));

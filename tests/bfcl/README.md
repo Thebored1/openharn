@@ -94,6 +94,38 @@ OPENHARN_MAX_TOKENS=1024 ./target/debug/openharn . &
 the gate on abstention workloads. `enable_thinking:false` is a no-op on templates without
 the switch.
 
+## The AST winner: native presentation + plan-first + dedup (LFM2-Q2, ~72% AST)
+
+The best AST-subset config found (45% → ~72%, replicated; full write-up + per-category table
+and the three papers it's grounded in are in [`notes/bfcl-v4.md`](../../notes/bfcl-v4.md), section
+"The wall moved"). Restores the model's native tool presentation (undoing prompt-tools
+flattening), adds an unconstrained planning step before the constrained emission (paying back
+the constraint tax and committing the model to N calls), and drops duplicate calls:
+
+```sh
+llama-server -m LFM2-8B-A1B-UD-Q2_K_XL.gguf --jinja --ctx-size 16384 --parallel 4 -ngl 0
+
+OPENHARN_BASE_URL=http://127.0.0.1:8080/v1 OPENHARN_SERVE=1 OPENHARN_SERVE_PORT=8090 \
+OPENHARN_FC_PROXY=1 OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1 OPENHARN_DEDUP_CALLS=1 \
+OPENHARN_MAX_TOKENS=512 ./target/debug/openharn . &
+```
+
+`run_arm.sh <name> <port> "<extra env>" <bfcl_root> <id_file>` runs one arm end-to-end
+(serve → generate → evaluate → per-category accuracy + transport-failure count). The four
+arms behind the table:
+
+```sh
+bash tests/bfcl/run_arm.sh D  8090 "OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 OPENHARN_STRICT_ABSTAIN=1 OPENHARN_FC_GATE=1" "$TEMP/bfcl_D" "$IDFILE"
+bash tests/bfcl/run_arm.sh H1 8091 "OPENHARN_NATIVE_TEMPLATE=1" "$TEMP/bfcl_H1" "$IDFILE"
+bash tests/bfcl/run_arm.sh H2 8092 "OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1" "$TEMP/bfcl_H2" "$IDFILE"
+bash tests/bfcl/run_arm.sh H2d 8093 "OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1 OPENHARN_DEDUP_CALLS=1" "$TEMP/bfcl_H2d" "$IDFILE"
+```
+
+Note: `NATIVE_TEMPLATE` does not run the relevance gate (it forces a call), so it's for the
+AST categories (all need a call), not `irrelevance`. Transport retry (3 attempts) is always on
+and matters here — native-template makes 2–3 requests/entry and llama-server's accept queue
+flakes under `--num-threads 4`; without retry the score is depressed by dropped connections.
+
 ## Decomposition probe (`decompose_probe.py`)
 
 Probes the biggest residual failure class (dropped sub-tasks) without touching openharn —
