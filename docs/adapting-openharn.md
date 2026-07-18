@@ -160,3 +160,30 @@ at a plausible-but-wrong path, or loops on failure, that's model judgment — st
 grounding raise the floor and the circuit breaker stops the spiral, but they can't supply
 competence the model lacks. Which families clear that bar on CPU:
 [`small-model-tool-calling.md`](../notes/small-model-tool-calling.md).
+
+### The hard wall: multi-call composition
+
+The one deficit no mode in this guide fixes is **composing more than one call**. Measured on
+BFCL v4 (see [`../notes/bfcl-v4.md`](../notes/bfcl-v4.md)):
+
+- **Single call** — the model is fine on its own. A 2-bit LFM2-8B-A1B scores ~80% on
+  `simple` and `multiple` *raw*, no harness. Grammar barely moves it (and can cost a few
+  points via overhead). Don't reach for strict mode to fix single calls; it isn't broken.
+- **Two or more calls at once** (`parallel`, `parallel_multiple`) — the same model scores a
+  literal **0% raw**. The harness lifts it to ~22% / ~42% by fixing *form* (forcing valid
+  syntax, killing the whitespace runaway that dropped calls), but it plateaus there.
+- **Dependent calls in sequence** (agentic `cd; mkdir; mv`, and cross-call shared values like
+  a `principal=5000` stated once but needed by two calls) — not fixed at all.
+
+Why no knob helps: strictness fixes the *shape* of a call, not the *judgment* to know a
+second call is owed and to route the right argument into it. That judgment lives in the
+weights. We confirmed it two ways — (1) grammar, relevance gates, decomposition, and
+best-of-N all plateau at the same ceiling; (2) feeding the model **oracle-correct history**
+before each turn (a perfect external memory) still yields a 0% hit rate on dependent
+multi-call turns. So an external scratchpad / "memory" layer does **not** rescue this: the
+missing piece is the *author of the plan*, not a place to store it.
+
+What *does* move it: better weights. Higher bit-depth is the first dial — the same MiniCPM
+model does multi-call at ~82% at Q8 but ~47% at Q4; composition is the first capability
+quantization eats. Task-specific fine-tuning is the other (cf. TinyAgent, 12.7% → 78.9%).
+If your job needs reliable multi-step tool use, spend there, not on harness knobs.
