@@ -712,6 +712,49 @@ the bottleneck is entirely **generation** — the 4-bit model plans the wrong ca
 road ends in the same place: the model, not the harness. A verifier tells you the plan is
 wrong; it can't write a right one.
 
+## Decomposition done right: plan → parse → per-item (fixes 8, breaks 7)
+
+The counter failed because it asked the model to *assert a number*. This asks it to *plan*
+and lets the harness count the plan — Least-to-Most (Zhou et al., arXiv:2205.10625) /
+decomposed prompting. One unconstrained think-on generation: "break this into a numbered
+list of the separate tool calls needed; don't write the calls, just list what each does."
+Regex the list. Run one focused native+`required` generation per item, each given the FULL
+request as context ("shared values live in the request" — mitigates cross-item deps). If the
+list won't parse, fall back to the plain implicit call.
+
+Same 40, on GPU (6× MiniCPM-Q4 instances; GPU Q4_0 is less precise than CPU, so this is
+within-backend only — don't compare to the CPU 72.5%):
+
+| | implicit | decompose |
+|---|---|---|
+| planning parsed | — | **38/40** |
+| count-accuracy | 21/40 | **29/40** |
+| count dist | `{1:17, 2:21}` (under-calls) | `{2:28, 3:4, 4:4}` ≈ gt |
+| **BFCL AST** | 45.0% | 47.5% |
+
+The list parses (38/40 vs 21/40 for the `COUNT=` format) and the count jumps (+20 points,
+17 under-calls → 4). But BFCL moves +2.5 — one entry — and that flat number is a lie: it's a
+**15/40 churn**. Decompose **fixed 8, broke 7**.
+
+- **Fixed (8):** the dropped-sub-task/wrong_count cases — incl. `pm_27` (transfer $5000 *then*
+  interest at 3%): implicit dropped the interest call; decompose emitted it AND pulled
+  `principal:5000.0` from the request context. The dependency mitigation worked, on the
+  hardest case. Decomposition does exactly what it's for.
+- **Broke (7):** two mechanisms. The plan **over-splits** — `pm_4`, gt=2, the list had 4
+  items → a duplicate `derivative` call. And each extra per-item generation is **new failure
+  surface** — `pm_9`, one call came back mangled (`hotel_book({"location":"Boston\n</>\n<parameter=nights>…` —
+  the Q4_0 XML leak, in a per-item gen) and flight_book got dropped.
+
+So the mechanism is real and works on its target; **applied to everything it's a wash,
+because you can't tell which cases need it.** That's the completeness-gate again — help the
+~8 that need decomposing, leave the ~7 that don't, and the router is the checker we already
+measured at chance. The fix exists; the routing doesn't.
+
+Where it goes: decompose fails *differently* from implicit (fixes 8 implicit misses). So
+best-of-{implicit, decompose} with a **reliable selector** keeps both — up to 19 vs ~12
+alone. The selector needs a literal signal (execution), which only exists on agentic tasks.
+Which is the next section.
+
 ## Reproduce
 
 [`tests/bfcl/README.md`](../tests/bfcl/README.md) — exact `bfcl generate/evaluate` commands,
