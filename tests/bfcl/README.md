@@ -126,6 +126,25 @@ AST categories (all need a call), not `irrelevance`. Transport retry (3 attempts
 and matters here — native-template makes 2–3 requests/entry and llama-server's accept queue
 flakes under `--num-threads 4`; without retry the score is depressed by dropped connections.
 
+### Thinking models: add `OPENHARN_PLAN_ALWAYS`
+
+`PLAN_FIRST` is skipped when the template opens a `<think>` tag (the model already reasons), so
+a *thinking* model uses its native think — which may under-call on composition. `PLAN_ALWAYS`
+runs the enumeration step *after* the native think too. Cross-model example (MiniCPM-V-4.6 Q4_0
+on GPU/CUDA, same 160-entry subset): winning config = 60.0% AST (strong singles, weak
+composition — 22/26 parallel misses were under-calls); adding `PLAN_ALWAYS` cut under-calls to
+14/18 and lifted AST to ~65.6% mean (two runs 68.75 / 62.5 — noisier, since think+plan is two
+free-generation phases). Full table + caveats in [`notes/bfcl-v4.md`](../../notes/bfcl-v4.md)
+("Does it transfer?").
+
+```sh
+# thinking model (GPU): winning config + PLAN_ALWAYS
+llama-server -m MiniCPM-V-4_6-Q4_0.gguf --jinja --ctx-size 16384 --parallel 4 -ngl 99   # CUDA build
+bash tests/bfcl/run_arm.sh MCPM 8095 \
+  "OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1 OPENHARN_DEDUP_CALLS=1 OPENHARN_PLAN_ALWAYS=1" \
+  "$TEMP/bfcl_mcpm" "$IDFILE"
+```
+
 ## Decomposition probe (`decompose_probe.py`)
 
 Probes the biggest residual failure class (dropped sub-tasks) without touching openharn —

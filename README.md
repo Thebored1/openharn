@@ -2,7 +2,7 @@
 
 A tiny, local-first coding agent for **small** language models.
 
-openharn is ~1,500 lines of Rust: a thin agent loop against any OpenAI-compatible
+openharn is ~3,400 lines of Rust: a thin agent loop against any OpenAI-compatible
 endpoint, plus a battle-tested edit engine, deliberately designed so that a *small*
 local model — think **MiniCPM-0.8B** or similar — can do real coding tasks (read,
 search, edit, run) reliably.
@@ -29,8 +29,9 @@ of scope.
 
 ## Features
 
-- **10 tools:** `read`, `write`, `edit`, `multiedit`, `glob`, `grep`, `bash`,
-  `webfetch`, `todowrite`, `todoread`.
+- **13 tools:** `read`, `write`, `edit`, `multiedit`, `glob`, `grep`, `bash`,
+  `python`, `webfetch`, `todowrite`, `todoread`, plus system-scope `glob_system` /
+  `grep_system`. Restrict the set with `OPENHARN_TOOLS` for a smaller, safer surface.
 - **Anchored edits** — an exact-string replacer cascade (ported from opencode) that
   tolerates whitespace/indentation/escaping drift, so the model changes a *span*, not
   the whole file.
@@ -56,6 +57,11 @@ of scope.
   *schema-valid* tool call (a weak model can't invent a field or malform a call);
   `OPENHARN_NARROW=1` locks it to read-only navigation for a maximally reliable agent.
   See the [adaptation guide](docs/adapting-openharn.md).
+- **Native-template + plan-first tool calling** — for models whose native format degrades
+  under quantization, render the model's *own* tool presentation (`OPENHARN_NATIVE_TEMPLATE=1`)
+  instead of flattening it, reason before the grammar clamps (`OPENHARN_PLAN_FIRST` /
+  `OPENHARN_PLAN_ALWAYS`), and drop duplicate calls (`OPENHARN_DEDUP_CALLS`). On BFCL v4 this
+  took a 2-bit LFM2 from 45% to ~72% AST — see the [BFCL write-up](notes/bfcl-v4.md).
 - **Local or cloud** — any OpenAI-compatible endpoint via `base_url` + optional key.
 - **Serve mode** (`--serve` / `OPENHARN_SERVE=1`) — openharn itself becomes an
   OpenAI-compatible HTTP server (`POST /v1/chat/completions`, `GET /v1/models`,
@@ -67,7 +73,7 @@ of scope.
 Best in testing so far (CPU, from the [benchmark](notes/small-model-tool-calling.md)):
 
 - **`LFM2.5-8B-A1B`** (incl. the `APEX-I-Compact` build) — emits tool calls reliably with prompt-tools + strict; run reasoning-off (`OPENHARN_NO_THINK=1`) for ~3× faster turns on CPU.
-- **`LFM2-8B-A1B-UD-Q2_K_XL`** — 2-bit quant that emits tool calls **only with `OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1`** (text-form + GBNF grammar). Native tool-calling does not work at this quant. Best speed × capability for local default when using the tuned config.
+- **`LFM2-8B-A1B-UD-Q2_K_XL`** — 2-bit quant, the CPU default. For the coding agent, prompt-tools + strict is the reliable baseline. For *multi-call* tool use (the model's weak spot), the native-template + plan-first path is far stronger — on BFCL v4 it lifts this exact model from 45% to ~72% AST (`OPENHARN_NATIVE_TEMPLATE=1 OPENHARN_PLAN_FIRST=1 OPENHARN_DEDUP_CALLS=1`). Earlier notes said native tool-calling "does not work" at this quant; that was the *prompt-tools flattening* suppressing it — restore the native presentation and it does. See [`notes/bfcl-v4.md`](notes/bfcl-v4.md).
 
 ## Quick start
 
@@ -203,12 +209,14 @@ The behavioral suite encodes real failure cases (over-eager edits, spirals, fake
 
 ## Architecture
 
-Four files:
+Five files:
 
 - `src/main.rs` — the REPL
-- `src/agent.rs` — the whole harness: streaming loop, tool dispatch, context-fit
-- `src/tools.rs` — the 10 tools + a per-session read/todo state
+- `src/agent.rs` — the whole harness: streaming loop, tool dispatch, context-fit,
+  the FC-proxy + native-template / plan-first tool-calling paths
+- `src/tools.rs` — the 13 tools + a per-session read/todo state
 - `src/edit.rs` — the anchored replacer cascade
+- `src/serve.rs` — the OpenAI-compatible `--serve` HTTP layer
 
 No agent framework. Dependencies: `reqwest`, `serde`, `walkdir`, `regex`, `glob`.
 
@@ -227,6 +235,12 @@ Notes from building and stress-testing openharn against real small models on CPU
   tokens/sec, sets per-turn time; the 3–6× win from reasoning-off; MoE size ≠ speed.
 - [**How to implement openharn**](notes/how-to-implement-openharn.md) — the design/architecture
   intent behind the code: the loop, the tool surface, grounding, and the reliability ladder.
+- [**openharn on BFCL v4**](notes/bfcl-v4.md) — driving a small model through the Berkeley
+  Function Calling Leaderboard: the whitespace-bug hunt, the constraint tax, and how native
+  presentation + a plan step + dedup take a 2-bit LFM2 from 45% to ~72% AST (and how the same
+  levers transfer to MiniCPM-Q4 on GPU).
+- [**The composition wall I called immovable**](notes/composition-wall-moved.md) — the narrative
+  version: why "the model can't compose two calls" turned out to be the harness suppressing it.
 - [**Adapting openharn**](docs/adapting-openharn.md) — modes and how to modify it for your
   model / server / use case.
 
