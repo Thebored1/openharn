@@ -772,14 +772,49 @@ fn stream_response(
     (content, tool_calls)
 }
 
+/// Parse a JSON string (array or single object) into openharn-format tool calls.
+/// Returns the parsed calls, or empty vec if none could be extracted.
+fn parse_call_array(text: &str) -> Vec<Value> {
+    let Ok(val) = serde_json::from_str::<Value>(text) else {
+        return vec![];
+    };
+    let items: Vec<Value> = match val {
+        Value::Array(a) => a,
+        obj => vec![obj],
+    };
+    let mut calls = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let f = item.get("function").unwrap_or(item);
+        if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
+            let args = f.get("arguments").or_else(|| f.get("parameters"));
+            let args_str = match args {
+                Some(a) if a.is_string() => a.as_str().unwrap_or("{}").to_string(),
+                Some(a) if !a.is_null() => a.to_string(),
+                _ => "{}".to_string(),
+            };
+            calls.push(json!({
+                "id": format!("call_{i}"),
+                "type": "function",
+                "function": { "name": name, "arguments": args_str }
+            }));
+        }
+    }
+    calls
+}
+
 /// Recover a structured tool call the server left as plain text. Handles the Granite
 /// family shape — an optional `<tool_call>` / `<|tool_call|>` marker followed by a JSON
 /// list `[{"name":…, "arguments":{…}}]` — and returns OpenAI-format tool_calls (with
 /// `arguments` as a JSON string, as the dispatcher expects). Returns None if `content`
 /// isn't a recognizable tool call, so a normal answer is never misread as one.
+///
+/// Also recovers from *incomplete* arrays (no closing `]`) a common failure mode where
+/// a weak model emits a valid first call object then runs out of tokens or spews
+/// whitespace: the partial array is repaired by appending `]` and trying each call
+/// object individually.
 fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
     let mut s = content.trim();
-    for marker in ["<|tool_call|>", "```"] {
+    for marker in ["<|tool_call|>", "```", "<tool_call>"] {
         if let Some(rest) = s.strip_prefix(marker) {
             s = rest;
             break;
@@ -793,37 +828,54 @@ fn parse_text_tool_calls(content: &str) -> Option<Vec<Value>> {
         let close = if is_arr { s.rfind(']') } else { s.rfind('}') };
         if let Some(close) = close {
             if close > open {
-                if let Ok(val) = serde_json::from_str::<Value>(&s[open..=close]) {
-                    let items: Vec<Value> = match val {
-                        Value::Array(a) => a,
-                        obj => vec![obj],
-                    };
-                    for (i, item) in items.iter().enumerate() {
-                        let f = item.get("function").unwrap_or(item);
-                        if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
-                            let args = f.get("arguments").or_else(|| f.get("parameters"));
-                            let args_str = match args {
-                                Some(a) if a.is_string() => a.as_str().unwrap_or("{}").to_string(),
-                                Some(a) if !a.is_null() => a.to_string(),
-                                _ => "{}".to_string(),
-                            };
-                            calls.push(json!({
-                                "id": format!("call_{i}"),
-                                "type": "function",
-                                "function": { "name": name, "arguments": args_str }
-                            }));
+                calls = parse_call_array(&s[open..=close]);
+                if !calls.is_empty() {
+                    return Some(calls);
+                }
+            }
+        }
+        // Incomplete array: no closing bracket found. Try to repair by appending `]`
+        // and parsing each call-object individually.
+        if is_arr && close.is_none() {
+            let tail = &s[open..];
+            let repaired = format!("{tail}]");
+            calls = parse_call_array(&repaired);
+            if calls.is_empty() {
+                // Last resort: find each `{"name":...}` block and try it as a standalone object
+                let mut idx = 0;
+                let bytes = tail.as_bytes();
+                let mut obj_start = None;
+                while idx < bytes.len() {
+                    if bytes[idx] == b'{' {
+                        obj_start = Some(idx);
+                    } else if bytes[idx] == b'}' {
+                        if let Some(start) = obj_start.take() {
+                            let obj_str = &tail[start..=idx];
+                            let single = parse_call_array(obj_str);
+                            if !single.is_empty() {
+                                calls.extend(single);
+                            }
                         }
                     }
-                    if !calls.is_empty() {
-                        return Some(calls);
-                    }
+                    idx += 1;
                 }
+            }
+            if !calls.is_empty() {
+                return Some(calls);
             }
         }
     }
     // Fallback: parse function-call syntax like `read({"path": "foo.txt"})` or `read(foo.txt)`
     // Also handles backticks: `read({"path": "foo.txt"})`
     // Maps positional args to each tool's first required parameter.
+    // Also tries to parse individual JSON objects that might be tool calls.
+    if calls.is_empty() && s.starts_with('{') {
+        // Standalone object (not in an array) — try as a single tool call
+        calls = parse_call_array(s);
+        if !calls.is_empty() {
+            return Some(calls);
+        }
+    }
     fn tool_param(name: &str) -> Option<&'static str> {
         Some(match name {
             "read" => "path",
@@ -975,6 +1027,10 @@ fn active_schemas(allowed: &Option<Vec<String>>) -> Value {
 const GRAMMAR_TAIL: &str = r#"value ::= object | array | string | number | "true" | "false" | "null"
 object ::= "{" ws ( string ws ":" ws value ( ws "," ws string ws ":" ws value )* )? ws "}"
 array ::= "[" ws ( value ( ws "," ws value )* )? ws "]"
+array-string ::= "[" ws ( string ( ws "," ws string )* )? ws "]"
+array-integer ::= "[" ws ( integer ( ws "," ws integer )* )? ws "]"
+array-number ::= "[" ws ( number ( ws "," ws number )* )? ws "]"
+array-boolean ::= "[" ws ( boolean ( ws "," ws boolean )* )? ws "]"
 string ::= "\"" ( [^"\\\n\r] | "\\" ["\\/bfnrt] )* "\""
 number ::= "-"? [0-9]+ ( "." [0-9]+ )?
 integer ::= "-"? [0-9]+
@@ -997,6 +1053,19 @@ fn value_rule_for(spec: &Value) -> String {
         "integer" => "integer".into(),
         "number" => "number".into(),
         "boolean" => "boolean".into(),
+        "array" => {
+            if let Some(items) = spec.get("items") {
+                match items["type"].as_str().unwrap_or("") {
+                    "string" => "array-string".into(),
+                    "integer" => "array-integer".into(),
+                    "number" => "array-number".into(),
+                    "boolean" => "array-boolean".into(),
+                    _ => "array".into(),
+                }
+            } else {
+                "array".into()
+            }
+        }
         _ => "value".into(),
     }
 }
@@ -1114,7 +1183,12 @@ fn tool_prompt(schemas: &Value) -> String {
     let mut s = format!(
         "You do NOT have a tool API. To call tools, reply with ONLY a tool-call line and nothing else:\n\
          <tool_call>[{{\"name\": \"<tool>\", \"arguments\": {{ ... }}}}]\n\
-         Put SEVERAL objects in the array to call multiple tools in one reply (one object per call).\n\
+         Put SEVERAL objects in the array to call multiple tools in one reply (one object per call).\n\n\
+         Examples:\n\
+         Single call:\n\
+         <tool_call>[{{\"name\": \"read\", \"arguments\": {{\"path\": \"main.rs\"}}}}]\n\n\
+         Multiple calls:\n\
+         <tool_call>[{{\"name\": \"glob\", \"arguments\": {{\"pattern\": \"**/*.rs\"}}}}, {{\"name\": \"read\", \"arguments\": {{\"path\": \"main.rs\"}}}}]\n\n\
          Prefer calling an available tool over answering the request from your own knowledge. \
          {no_tool_clause} Available tools:\n"
     );
@@ -1410,8 +1484,31 @@ fn relevance_gate(
         }
     }
     let sys = format!(
-        "Decide if ANY of these tools should be called to satisfy the user's request.\n\
-         Tools:\n{desc}Reply with exactly YES (a tool applies) or NO (none apply). Nothing else."
+         "Decide if ANY of these tools could be called to satisfy the user's request.\n\
+         Tools:\n{desc}\n\
+         Examples:\n\
+         User: What is the area of a circle with radius 5?\n\
+         Tool: calculate_area(radius=5)\n\
+         Answer: YES\n\n\
+         User: Hello, how are you?\n\
+         No tool needed.\n\
+         Answer: NO\n\n\
+         User: Find files matching *.rs\n\
+         Tool: glob(pattern=\"**/*.rs\")\n\
+         Answer: YES\n\n\
+         User: Tell me a joke.\n\
+         The available tools do not help with telling jokes.\n\
+         Answer: NO\n\n\
+         User: What is the capital of France?\n\
+         No tool fits this request.\n\
+         Answer: NO\n\n\
+         User: Book a flight to Tokyo and reserve a hotel.\n\
+         Tools: book_flight(destination), reserve_hotel(city)\n\
+         Answer: YES\n\n\
+         User: Sort the list [3,1,2].\n\
+         Available tools: get_weather(city). No sorting tool.\n\
+         Answer: NO\n\n\
+         Reply with exactly YES (a tool applies) or NO (none apply). Nothing else."
     );
     let mut wire: Vec<Value> = vec![json!({ "role": "system", "content": sys })];
     for m in messages {
@@ -1541,11 +1638,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_incomplete_array_no_closing_bracket() {
+        // Model emits a valid call object but doesn't close the array
+        let c = r#"<tool_call>[{"name": "read", "arguments": {"path": "foo.txt"}}"#;
+        let calls = parse_text_tool_calls(c).expect("should parse incomplete array");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "read");
+        let args: Value = serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(args["path"], "foo.txt");
+    }
+
     #[test]
     fn active_schemas_filters_and_grammar_constrains() {
         let s = active_schemas(&Some(vec!["glob".into()]));
         assert_eq!(s.as_array().unwrap().len(), 1, "only glob kept");
-        let g = tool_grammar(&s);
+        let g = tool_grammar(&s, "text");
         // the grammar names glob and its real args, and has a text escape hatch
         assert!(g.contains("root ::= call | text"));
         assert!(g.contains(r#""\"glob\"""#));
