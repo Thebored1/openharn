@@ -926,7 +926,7 @@ grammar pass that follows produces the clean `[{…},{…}]` array; the checker 
 distinct calls (verified in the result files: parallel_0/1/2/3 all pass with genuinely distinct
 args, not dedup artifacts).
 
-### Caveats — read these before believing the headline
+### Caveats
 
 - **`multiple` never fully recovers** (62.5/60 vs ~82.5 raw native FC). The constraint tax on
   single-tool-choice-among-many is only *partly* paid back by plan-first. If you only care about
@@ -935,25 +935,21 @@ args, not dedup artifacts).
   correct answer *is* the same call twice with identical args. dedup would break it. It is not in
   this subset (checked), and dedup is **opt-in** and off by default, so the coding agent is
   unaffected — but the flag is unsafe for the rare genuine identical-repeat call.
-- **Deviations from the CPU-first thesis: none this run** (that's the point — it's `-ngl 0`,
-  same box, same quant as the 45% baseline). The only non-defaults are `--num-threads 4` + the
-  transport retry, both documented above; retry is what makes the 4-thread number trustworthy.
+- **Deviations from CPU-first: none this run** — it's `-ngl 0`, same box, same quant as the 45%
+  baseline. The only non-defaults are `--num-threads 4` + the transport retry, both documented
+  above; retry is what makes the 4-thread number trustworthy.
 - **This does not resurrect the *agentic* multi_turn wall.** Those failures are *dependent,
   order-sensitive* sequences (`cd` then `mv`), a different and harder thing than a *parallel* set
   of independent calls. plan-first was not tested there and I would not expect it to clear that —
   the per-turn rate-0 finding above stands until measured otherwise.
 
-### What this does to the thesis
+### What's still walled
 
-"Harness owns form, weights own composition" was half right. Better: **the harness can suppress
-or unlock latent composition, and the default prompt-tools path was suppressing it.** The wins
-are still form-shaped underneath — native presentation (don't destroy the format), a plan buffer
-(don't constrain before the model has committed), and dedup (clean the emission). None of it is
-new capability injected into the model; it's *stopping the harness from hiding capability the
-weights already had.* That is a materially more useful statement than "only finetuning moves it,"
-and it's the one the numbers support. `parallel_multiple_27`-style **dependent** composition
-(shared value produced by one call, needed by another) is still unmoved — that one really is a
-weights problem, and it's the honest remaining wall.
+Every win above is *independent* parallel calls. Dependent composition — one call's output feeds
+another's argument, like `parallel_multiple_27` where task 2's `principal=5000` is only stated in
+task 1 — is unmoved. Plan-first enumerates it fine, but the model still can't route the shared
+value into the second call. Same failure as the agentic `cd; mv` sequences up top. That's a
+weights problem, not a presentation one, and it's the honest remaining wall.
 
 Winning config (BFCL AST, ≥60% target cleared at ~72%):
 
