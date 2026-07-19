@@ -1329,12 +1329,19 @@ fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
     let env_no_policy = std::env::var_os("OPENHARN_NO_POLICY").is_some();
     let env_iterate = std::env::var_os("OPENHARN_FC_ITERATE").is_some();
 
-    // In policy mode the relevance gate + abstain mode are ON by default: the
-    // harness makes the call-vs-abstain decision (the model cannot), and only
-    // emits a tool when the gate says one applies. This is what recovers the
-    // `irrelevance` category. Env switches can still force-disable them.
-    let policy_gate = env_gate || !env_no_policy;
-    let policy_abstain = env_abstain || !env_no_policy;
+    // In policy mode the relevance gate is ON by default ONLY when the harness
+    // decomposer finds zero matching clauses (plan_len == 0), which means the
+    // request is structurally irrelevant — no tool keywords matched. For requests
+    // with one or more planned clauses the gate is off by default (it would falsely
+    // reject relevant requests and crash simple/multiple accuracy). OPENHARN_FC_GATE
+    // still forces the gate on for all cases regardless.
+    let policy_gate = if plan_len == 0 {
+        env_gate || !env_no_policy
+    } else {
+        env_gate
+    };
+    // Abstain grammar is paired with the gate — only active when gate says NO_TOOL.
+    let policy_abstain = env_abstain || policy_gate;
 
     // Fall back to the historic global config when policy is disabled.
     if env_no_policy {
@@ -1494,14 +1501,13 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let expected_k = policy.crutch_k;
     let policy_max_tokens = policy.max_tokens;
     let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
-    // Path A: native tool-calling (strong for single calls; skipped when the policy
-    // wants prompt-tools, since prompt-tools is the more reliable multi-call path).
-    if !prompt_tools {
-        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
-            if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
-        }
+    // Path A: native tool-calling (strong for single calls). Runs for ALL cases;
+    // the candidate selector picks the best output regardless of which path won.
+    if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
+        if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
     }
-    // Path B: prompt-tools + strict grammar (parallel/multi-call cases, per policy).
+    // Path B: prompt-tools + strict grammar (rescue for models whose native FC
+    // degrades; multi-call cases benefit from the grammar-constrained array).
     if prompt_tools {
         let wire = flatten_for_prompt_tools(&msgs, tools, expected_k);
         let mut pt_body = json!({
