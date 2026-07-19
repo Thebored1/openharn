@@ -1,0 +1,5 @@
+{"id": "multiple_5", "result": "", "input_token_count": 320, "output_token_count": 3, "latency": 66.93072819709778}
+{"id": "multiple_8", "result": "", "input_token_count": 311, "output_token_count": 3, "latency": 70.24109673500061}
+{"id": "multiple_10", "result": "", "input_token_count": 0, "output_token_count": 0, "latency": 35.46923542022705}
+{"id": "multiple_12", "result": "", "input_token_count": 0, "output_token_count": 0, "latency": 35.17943859100342}
+{"id": "multiple_17", "result": [{"currency_conversion_get_rate": "{\"date\":\"2022-01-01\",\"from_currency\":\"EUR\",\"to_currency\":\"USD\"}"}], "input_token_count": 437, "output_token_count": 52, "latency": 26.95190191268921}

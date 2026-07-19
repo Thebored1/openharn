@@ -1,0 +1,5 @@
+{"id": "simple_python_5", "result": [{"solve_quadratic": "{\"a\":3,\"b\":-11,\"c\":-4}"}], "input_token_count": 380, "output_token_count": 38, "latency": 13.681299209594727}
+{"id": "simple_python_8", "result": [{"geometry_area_circle": "{\"radius\":10,\"units\":\"units\"}"}], "input_token_count": 362, "output_token_count": 34, "latency": 34.436092376708984}
+{"id": "simple_python_12", "result": [{"geometry_circumference": "{\"radius\":3,\"units\":\"units\"}"}], "input_token_count": 359, "output_token_count": 34, "latency": 33.916030406951904}
+{"id": "simple_python_13", "result": [{"calculate_area_under_curve": "{\"function\":\"x^2\",\"interval\":[1,3]}"}], "input_token_count": 375, "output_token_count": 43, "latency": 17.914971351623535}
+{"id": "simple_python_35", "result": [{"vegan_restaurant_find_nearby": "{\"location\":\"New York\",\"operating_hours\":22}"}], "input_token_count": 375, "output_token_count": 43, "latency": 15.38338017463684}

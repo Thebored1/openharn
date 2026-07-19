@@ -1,0 +1,2 @@
+Rank,Model,Non-Live Overall Acc,AST Summary,Simple AST,Python Simple AST,Java Simple AST,JavaScript Simple AST,Multiple AST,Parallel AST,Parallel Multiple AST,Irrelevance Detection
+1,LFM2-8B-A1B Q2_K_XL - openharn harness FC-proxy,0.00%,N/A,N/A,0.00%,N/A,N/A,0.00%,0.00%,0.00%,100.00%

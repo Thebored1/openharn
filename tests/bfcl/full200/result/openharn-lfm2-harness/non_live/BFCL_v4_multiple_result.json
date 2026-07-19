@@ -1,0 +1,40 @@
+{"id": "multiple_0", "result": [{"triangle_properties_get": "{\"side1\":5,\"side2\":4,\"side3\":3}"}], "input_token_count": 444, "output_token_count": 43, "latency": 46.87471675872803}
+{"id": "multiple_1", "result": [{"math_triangle_area_heron": "{\"side1\":3,\"side2\":4,\"side3\":5}"}], "input_token_count": 455, "output_token_count": 29, "latency": 40.42062330245972}
+{"id": "multiple_2", "result": [{"country_info_capital": "{\"country\":\"Brazil\"}"}], "input_token_count": 282, "output_token_count": 16, "latency": 33.23691725730896}
+{"id": "multiple_3", "result": [{"EuclideanDistance_calculate": "{\"pointA\":[3, 4],\"pointB\":[1, 2]}"}], "input_token_count": 380, "output_token_count": 28, "latency": 36.88371181488037}
+{"id": "multiple_4", "result": [{"kinematics_calculate_displacement": "{\"acceleration\":10,\"initial_speed\":20,\"time\":5}"}], "input_token_count": 522, "output_token_count": 30, "latency": 56.9477915763855}
+{"id": "multiple_5", "result": "", "input_token_count": 0, "output_token_count": 0, "latency": 60.017380237579346}
+{"id": "multiple_6", "result": [{"capacitance_calculator_calculate": "{\"A\":10,\"K\":1.0,\"d\":0.01}"}], "input_token_count": 558, "output_token_count": 29, "latency": 51.177181005477905}
+{"id": "multiple_7", "result": [{"wildlife_population_assess_growth": "{\"duration\":10,\"location\":\"Washington state\",\"species\":\"deer\"}"}], "input_token_count": 389, "output_token_count": 31, "latency": 50.39198589324951}
+{"id": "multiple_8", "result": "", "input_token_count": 0, "output_token_count": 0, "latency": 60.016090631484985}
+{"id": "multiple_9", "result": [{"calculate_average": "{\"gradeDict\":{\"math\": 90, \"science\": 75, \"history\": 82, \"music\": 89}}"}], "input_token_count": 348, "output_token_count": 38, "latency": 48.198118448257446}
+{"id": "multiple_10", "result": [{"database_modify_columns": "{\"db_name\":\"personal_data\",\"operation\":\"delete\",\"columns\":[\"email\", \"ssn\"],\"table\":\"employees\"}"}], "input_token_count": 401, "output_token_count": 37, "latency": 44.85587739944458}
+{"id": "multiple_11", "result": [{"math_roots_quadratic": "{\"a\":5,\"b\":20,\"c\":-25}"}], "input_token_count": 519, "output_token_count": 22, "latency": 46.35034132003784}
+{"id": "multiple_12", "result": "", "input_token_count": 0, "output_token_count": 0, "latency": 60.018542528152466}
+{"id": "multiple_13", "result": [{"corporate_finance_revenue_forecast": "{\"company\":\"XYZ\",\"product\":\"A\",\"sales_units_increase_percentage\":10}"}], "input_token_count": 425, "output_token_count": 54, "latency": 54.032387495040894}
+{"id": "multiple_14", "result": [{"finance_property_depreciation": "{\"depreciation_rate\":3,\"initial_cost\":200000,\"years\":5}"}], "input_token_count": 627, "output_token_count": 31, "latency": 42.22942805290222}
+{"id": "multiple_15", "result": [{"solarFarm_potential": "{\"coordinates\":[43.653225, -79.383186],\"month\":\"December\",\"panelArea\":80000}"}], "input_token_count": 425, "output_token_count": 36, "latency": 54.968398571014404}
+{"id": "multiple_16", "result": [{"population_genetics_calculate_ne": "{\"generations\":100,\"probability\":0.95,\"species\":\"wild tiger\"}"}], "input_token_count": 484, "output_token_count": 51, "latency": 45.515318870544434}
+{"id": "multiple_17", "result": "", "input_token_count": 0, "output_token_count": 0, "latency": 60.0234694480896}
+{"id": "multiple_18", "result": [{"european_history_battle_details": "{\"battle\":\"Battle of Stalingrad\"}"}], "input_token_count": 307, "output_token_count": 23, "latency": 43.289090394973755}
+{"id": "multiple_19", "result": [{"religion_history_get_schisms": "{\"count\":3,\"religion\":\"Christianity\"}"}], "input_token_count": 411, "output_token_count": 38, "latency": 50.52051663398743}
+{"id": "multiple_20", "result": [{"sculpture_price_calculate": "{\"material\":\"marble\",\"size\":3}"}], "input_token_count": 409, "output_token_count": 22, "latency": 42.400429487228394}
+{"id": "multiple_21", "result": [{"generate_sound_wave": "{\"duration\":5,\"frequency\":440,\"wave_type\":\"sine\"}"}], "input_token_count": 417, "output_token_count": 44, "latency": 56.4563410282135}
+{"id": "multiple_22", "result": [{"sports_data_basketball_most_points_single_game": "{\"league\":\"NBA\"}"}], "input_token_count": 481, "output_token_count": 37, "latency": 58.81865072250366}
+{"id": "multiple_23", "result": [{"basketball_player_stats_get": "{\"player_name\":\"LeBron James\",\"stats_fields\":[\"points\", \"assists\", \"minutes\"]}"}], "input_token_count": 521, "output_token_count": 35, "latency": 55.68658781051636}
+{"id": "multiple_24", "result": [{"route_planner_calculate_route": "{\"start\":\"London\",\"destination\":\"Edinburgh\",\"method\":\"fastest\"}"}], "input_token_count": 354, "output_token_count": 29, "latency": 55.12402105331421}
+{"id": "multiple_25", "result": [{"video_games_store_price": "{\"game_title\":\"Assassins Creed Valhalla\",\"platform\":\"PlayStation\",\"region\":\"United States\"}"}], "input_token_count": 516, "output_token_count": 35, "latency": 50.45852470397949}
+{"id": "multiple_26", "result": [{"game_rewards_get": "{\"game\":\"Fortnite\",\"platform\":\"Playstation\",\"mission\":\"\",\"trophy\":\"\"}"}], "input_token_count": 503, "output_token_count": 28, "latency": 46.66229224205017}
+{"id": "multiple_27", "result": [{"maps_shortest_path": "{\"end_location\":\"Rome, Italy\",\"mode\":\"transit\",\"start_location\":\"Paris, France\"}"}], "input_token_count": 337, "output_token_count": 34, "latency": 47.543330669403076}
+{"id": "multiple_28", "result": [{"solve_quadratic_equation": "{\"a\":2,\"b\":3,\"c\":-4}"}], "input_token_count": 388, "output_token_count": 22, "latency": 42.232184410095215}
+{"id": "multiple_29", "result": [{"functions_intersect": "{\"function1\":\"3x+2\",\"function2\":\"2x+3\"}"}], "input_token_count": 278, "output_token_count": 25, "latency": 44.97726035118103}
+{"id": "multiple_30", "result": [{"rectangle_area": "{\"length\":12,\"width\":5}"}], "input_token_count": 410, "output_token_count": 17, "latency": 33.155683279037476}
+{"id": "multiple_31", "result": [{"geometry_rectangle_calculate": "{\"length\":10,\"width\":7}"}], "input_token_count": 421, "output_token_count": 35, "latency": 53.468546628952026}
+{"id": "multiple_32", "result": [{"geometry_calculate_cone_volume": "{\"radius\":4,\"height\":7,\"round_off\":0}"}], "input_token_count": 369, "output_token_count": 27, "latency": 38.19212222099304}
+{"id": "multiple_33", "result": [{"calculate_integral": "{\"a\":1,\"b\":2,\"func\":\"3*x**2\"}"}], "input_token_count": 331, "output_token_count": 26, "latency": 50.96275353431702}
+{"id": "multiple_34", "result": [{"math_lcm": "{\"num1\":18,\"num2\":12}"}], "input_token_count": 380, "output_token_count": 18, "latency": 35.52107906341553}
+{"id": "multiple_35", "result": [{"calculate_gcd": "{\"num1\":128,\"num2\":256,\"algorithm\":\"euclidean\"}"}], "input_token_count": 367, "output_token_count": 25, "latency": 43.152493715286255}
+{"id": "multiple_36", "result": [{"kinematics_calculate_speed_from_rest": "{\"distance\":20,\"time\":4}"}], "input_token_count": 453, "output_token_count": 24, "latency": 47.839110136032104}
+{"id": "multiple_37", "result": [{"kinematics_final_velocity": "{\"acceleration\":-9.81,\"initial_velocity\":40,\"time\":6}"}], "input_token_count": 559, "output_token_count": 32, "latency": 54.50261116027832}
+{"id": "multiple_38", "result": [{"library_search_book": "{\"availability\":false,\"book_name\":\"The Alchemist\",\"city\":\"New York\"}"}], "input_token_count": 377, "output_token_count": 28, "latency": 45.87990641593933}
+{"id": "multiple_39", "result": [{"ride_hailing_get_rides": "{\"destination\":\"Philadelphia\",\"max_cost\":50,\"source\":\"New York\"}"}], "input_token_count": 353, "output_token_count": 29, "latency": 34.12696385383606}

@@ -1290,90 +1290,223 @@ fn try_fc_request(
     Some((tool_calls, pt, ct))
 }
 
-pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Value>, String, u64, u64) {
-    let strict = std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
-    let prompt_tools = strict || std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
-    let abstain = std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some();
+/// Per-request harness policy. Instead of one global configuration baked in at
+/// process start, the harness derives a tailored policy from the *request itself*
+/// (the tool schemas + the user's question). This is the category-aware crutch:
+/// the model cannot decide when to call, how many calls to emit, or whether to
+/// abstain — so the harness makes those structural decisions per case.
+///
+/// Derivation (model-agnostic, from request signal only):
+/// - Irrelevant request  → gate ON + abstain mode: harness decides "no tool
+///   applies" via the relevance gate and returns NO_TOOL (recovers BFCL
+///   `irrelevance` failures, where the model wrongly emits a call).
+/// - Multi-operation req → prompt-tools + strict grammar + count-hint crutch
+///   (K = planned call count) + higher max_tokens (so the multi-call array is
+///   not truncated). Targets parallel / multiple / parallel_multiple.
+/// - Single operation    → native FC preferred, no crutch, normal tokens.
+#[derive(Clone, Debug)]
+struct CasePolicy {
+    category: &'static str, // "irrelevant" | "single" | "multi"
+    gate: bool,             // run the relevance gate pre-pass
+    abstain: bool,          // force grammar into abstain (NO_TOOL) mode
+    prompt_tools: bool,     // use prompt-tools + strict grammar path
+    strict: bool,           // constrain output to valid call(s)
+    crutch_k: Option<usize>,// expected call count hint (None = no hint)
+    max_tokens: u32,        // per-request generation budget
+    native_template: bool,  // prefer the model's own chat template + think-then-call
+    plan_first: bool,       // inject "list ops in prose first, then call" instruction
+}
 
-    // Native-template strict mode (OPENHARN_NATIVE_TEMPLATE=1): render the model's OWN
-    // chat template (tools included) via the server's /apply-template, let a thinking
-    // model finish its think block unconstrained, then grammar-force the call. This fixes
-    // the two ways plain modes fail on a model whose native FC *format* degrades (e.g.
-    // under heavy quantization it mangles its own call syntax) without retraining the
-    // model on openharn's text protocol:
-    //   - prompt-tools flattening loses the native tool presentation the model was
-    //     trained on (some models emit nothing on a text-only prompt);
-    //   - llama-server rejects `tools` + `grammar` in one request, so the grammar can't
-    //     ride on a native chat/completions call.
-    // Fully model-agnostic: the tool prompt comes from the model's template, the think
-    // tag is detected from the template's rendered tail, and the grammar derives from
-    // the request's tools. Falls back to the standard path if /apply-template is absent.
-    if std::env::var_os("OPENHARN_NATIVE_TEMPLATE").is_some() {
+/// Derive the per-request policy from the request signal. `plan_len` is the
+/// harness decomposition count (1 = single operation, >1 = multi). `has_tools`
+/// is whether the request even carries tool schemas.
+fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
+    // Env master-switches still act as global overrides / kill-switches.
+    let env_strict = std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
+    let env_prompt = std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
+    let env_abstain = std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some();
+    let env_gate = std::env::var_os("OPENHARN_FC_GATE").is_some();
+    let env_no_policy = std::env::var_os("OPENHARN_NO_POLICY").is_some();
+    let env_iterate = std::env::var_os("OPENHARN_FC_ITERATE").is_some();
+
+    // In policy mode the relevance gate + abstain mode are ON by default: the
+    // harness makes the call-vs-abstain decision (the model cannot), and only
+    // emits a tool when the gate says one applies. This is what recovers the
+    // `irrelevance` category. Env switches can still force-disable them.
+    let policy_gate = env_gate || !env_no_policy;
+    let policy_abstain = env_abstain || !env_no_policy;
+
+    // Fall back to the historic global config when policy is disabled.
+    if env_no_policy {
+        let strict = env_strict || env_prompt;
+        return CasePolicy {
+            category: "single", gate: strict && env_gate, abstain: env_abstain,
+            prompt_tools: env_prompt, strict,
+            crutch_k: if env_iterate { Some(plan_len) } else { None },
+            max_tokens: cfg.max_tokens,
+            native_template: env_prompt, plan_first: false,
+        };
+    }
+
+    if !has_tools {
+        // No tools at all: nothing to call; abstain path is moot, just answer.
+        return CasePolicy {
+            category: "irrelevant", gate: policy_gate, abstain: false,
+            prompt_tools: env_prompt, strict: env_strict || env_prompt,
+            crutch_k: None, max_tokens: cfg.max_tokens,
+            native_template: false, plan_first: false,
+        };
+    }
+
+    if plan_len <= 1 {
+        // Single operation: native FC is the model's best mode. The gate stays
+        // engaged for irrelevance detection, but we do NOT inject a count hint
+        // (it degrades the model's good single-call output).
+        CasePolicy {
+            category: "single",
+            gate: policy_gate,
+            abstain: policy_abstain,
+            prompt_tools: env_prompt,
+            strict: env_strict || env_prompt,
+            crutch_k: None,
+            max_tokens: cfg.max_tokens,
+            native_template: false, plan_first: false,
+        }
+    } else {
+        // Multi-operation: the model's core failure is under-decomposition
+        // (emits 1 call when 2-4 needed). Two strategies, tried in order:
+        //   1. Native template — render the model's OWN tool format via
+        //      /apply-template + think-then-call (the think phase gives the
+        //      model time to plan all calls before the grammar forces output).
+        //   2. Plan-first fallback — inject "enumerate ops in prose, then
+        //      output the call array" into prompt-tools, then recover calls
+        //      from the full text. The prose enumeration commits the model
+        //      to N before the JSON, fixing under-count without a loop.
+        CasePolicy {
+            category: "multi",
+            gate: policy_gate,
+            abstain: policy_abstain,
+            prompt_tools: true,
+            strict: true,
+            crutch_k: Some(plan_len),
+            max_tokens: cfg.max_tokens.max(1024),
+            native_template: true,
+            plan_first: true,
+        }
+    }
+}
+
+pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Value>, String, u64, u64) {
+    let has_tools = tools.as_array().map(|a| !a.is_empty()).unwrap_or(false);
+
+    // ---- Per-request category-aware policy ----------------------------------
+    // Derive the harness policy from the request signal itself, so each case gets
+    // the configuration it needs (irrelevance→gate+abstain, multi→native-template
+    // or plan-first+prompt-tools, single→native FC). This replaces the one fixed
+    // global config. The env OPENHARN_NATIVE_TEMPLATE still works as a global
+    // override (checked after policy so it can force native-template on any case).
+    let user_req = messages
+        .iter()
+        .rev()
+        .find(|m| m["role"].as_str() == Some("user"))
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("");
+    let plan_len = if has_tools { harness_decompose(user_req, tools).len() } else { 0 };
+    let policy = derive_policy(cfg, plan_len, has_tools);
+
+    // Strategy 1: native-template (preferred for multi-call). Render the model's
+    // OWN chat template via /apply-template + think-then-call. The think phase
+    // gives the model time to plan all operations before the grammar forces the
+    // call array, avoiding under-decomposition. Falls back silently if the server
+    // has no /apply-template (non-llama.cpp endpoints).
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    if policy.native_template || std::env::var_os("OPENHARN_NATIVE_TEMPLATE").is_some() {
         if let Some(out) = fc_native_template(cfg, messages, tools) {
             return out;
         }
-        eprintln!("[fc_proxy] /apply-template unavailable; falling back to standard path");
+        // silently fall through if /apply-template unavailable
     }
-    // Relevance gate (OPENHARN_FC_GATE): a YES/NO pre-pass decides call-vs-abstain, then
-    // the generation is FORCED to a valid call when a tool applies. Separating the "should
-    // I call" judgment from the "emit a valid call" mechanics lets the harness force calls
-    // on relevant inputs (fixing prose-instead-of-call / parallel under-calling) without
-    // over-calling on irrelevant ones. Needs strict grammar to force the call.
-    let gate = strict && std::env::var_os("OPENHARN_FC_GATE").is_some();
 
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
     let (mut pt_total, mut ct_total) = (0u64, 0u64);
-
-    // Harness-as-crutch (OPENHARN_FC_ITERATE): the weak model under-generates on multi-operation
-    // requests (emits 1 call when 2-4 are needed — the dominant BFCL failure). The HARNESS
-    // plans the decomposition itself from the request + tool schemas (harness_decompose),
-    // derives the expected call count K, and injects "exactly K calls" into the single-shot
-    // prompt. The model still does ONE generation (its best mode); the harness only supplies
-    // the structural hint it cannot derive on its own. No multi-generation loop (that was
-    // tried and degraded output) — minimal, single-pass intervention.
-    let mut expected_k: Option<usize> = None;
-    if std::env::var_os("OPENHARN_FC_ITERATE").is_some() {
-        let user_req = messages
-            .iter()
-            .rev()
-            .find(|m| m["role"].as_str() == Some("user"))
-            .and_then(|m| m["content"].as_str())
-            .unwrap_or("");
-        let plan = harness_decompose(user_req, tools);
-        if plan.len() > 1 {
-            expected_k = Some(plan.len());
-        }
+    let mut msgs: Vec<Value> = messages.to_vec();
+    if !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
+        msgs.insert(0, json!({ "role": "system", "content": "" }));
     }
 
-    // Pass 1: relevance gate. If it says no tool applies, abstain immediately.
-    let mut grammar_root = if abstain { "abstain" } else { "text" };
-    if gate {
+    // Strategy 2: gate + abstain (for irrelevance). Separate the call-vs-abstain
+    // decision from the generation itself — the harness decides whether any tool
+    // applies, not the model.
+    let mut grammar_root = if policy.abstain { "abstain" } else { "text" };
+    if policy.gate {
         let (relevant, gpt, gct) = relevance_gate(&client, &url, cfg, messages, tools);
         pt_total += gpt;
         ct_total += gct;
         if !relevant {
             return (vec![], "NO_TOOL".to_string(), pt_total, ct_total);
         }
-        grammar_root = "call"; // a tool applies → force a schema-valid call
+        grammar_root = "call";
     }
 
-    // Pass 2: single-shot generation (original behaviour). Hybrid native FC + prompt-tools.
-    let mut msgs: Vec<Value> = messages.to_vec();
-    if !msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
-        msgs.insert(0, json!({ "role": "system", "content": "" }));
+    // Strategy 3: plan-first (for multi-call when native-template unavailable).
+    // Inject "enumerate ops in prose, then output the call array" into the
+    // prompt-tools system message, then recover calls from the full text via
+    // parse_text_tool_calls. The prose enumeration commits the model to N before
+    // the JSON, fixing under-count without a multi-gen loop.
+    if policy.plan_first {
+        let wire = flatten_for_prompt_tools(&msgs, tools, policy.crutch_k);
+        let plan_prefix = "\nFirst list the operations you need to perform as a numbered \
+            plan (\"1. calculate_triangle_area(...)\\n2. ...\"), then output the \
+            exact sequence of tool calls.";
+        let wire = {
+            let mut w = wire;
+            if let Some(sys) = w.iter_mut().find(|m| m["role"].as_str() == Some("system")) {
+                let base = sys["content"].as_str().unwrap_or("");
+                sys["content"] = json!(format!("{base}{plan_prefix}"));
+            }
+            w
+        };
+        let mut body = json!({
+            "model": cfg.model, "messages": wire,
+            "temperature": cfg.temperature,
+            "max_tokens": policy.max_tokens,
+            "stream": false,
+        });
+        if policy.strict {
+            body["grammar"] = json!(tool_grammar(tools, "text"));
+        }
+        let (tc, pt, ct) = match try_fc_request(&client, &url, &cfg.api_key, body) {
+            Some(x) => x,
+            None => return (vec![], String::new(), pt_total, ct_total),
+        };
+        pt_total += pt; ct_total += ct;
+        if !tc.is_empty() {
+            return (tc, String::new(), pt_total, ct_total);
+        }
+        // No calls recovered from text — fall through to standard generation
     }
+
+    // Strategy 4: standard single-shot generation (original behaviour).
+    let gate = policy.gate;
+    let abstain = policy.abstain;
+    let prompt_tools = policy.prompt_tools;
+    let strict = policy.strict;
+    let expected_k = policy.crutch_k;
+    let policy_max_tokens = policy.max_tokens;
     let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
-    // Path A: native tool-calling (strong for single calls)
-    if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
-        if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
+    // Path A: native tool-calling (strong for single calls; skipped when the policy
+    // wants prompt-tools, since prompt-tools is the more reliable multi-call path).
+    if !prompt_tools {
+        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
+            if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
+        }
     }
-    // Path B: prompt-tools + strict grammar (parallel/multi-call cases)
+    // Path B: prompt-tools + strict grammar (parallel/multi-call cases, per policy).
     if prompt_tools {
         let wire = flatten_for_prompt_tools(&msgs, tools, expected_k);
         let mut pt_body = json!({
             "model": cfg.model, "messages": wire,
-            "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
+            "temperature": cfg.temperature, "max_tokens": policy_max_tokens, "stream": false,
         });
         if strict { pt_body["grammar"] = json!(tool_grammar(tools, grammar_root)); }
         if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, pt_body) {
