@@ -115,12 +115,14 @@ OPENHARN_NO_POLICY=1 ./target/debug/openharn .
 | `OPENHARN_MAX_TOKENS` | 2048 | Generation token budget |
 | `OPENHARN_NO_POLICY` | (unset) | Revert to fixed global config |
 | `OPENHARN_NATIVE_TEMPLATE` | (unset) | Force native template on all cases |
-| `OPENHARN_PROMPT_TOOLS` | true (built-in) | Enable prompt-tools path |
-| `OPENHARN_STRICT_TOOLS` | true (built-in) | Attach GBNF grammar |
+| `OPENHARN_PROMPT_TOOLS` | (opt-in, off) | Enable prompt-tools path (forces a call via grammar) |
+| `OPENHARN_STRICT_TOOLS` | (opt-in, off) | Attach GBNF grammar |
 
-The per-case policy (`derive_policy`) overrides most of these per-request. The built-in
-defaults for PROMPT_TOOLS and STRICT_TOOLS mean you don't need to set them — they power
-the underlying mechanism the policy selects.
+The per-case policy (`derive_policy`) overrides these per-request. **PROMPT_TOOLS /
+STRICT_TOOLS are OPT-IN, not baked defaults** — single-call cases use native FC (the model's
+best mode); forcing prompt-tools+strict on single-call actually *hurts* `multiple` (measured:
+67.5% → 47.5%). Multi-call cases use prompt-tools+strict internally via the policy regardless
+of these flags. Set them only to override the policy globally.
 
 ## Agentic / multi-turn
 

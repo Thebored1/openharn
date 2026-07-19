@@ -1,51 +1,33 @@
 [
   {
-    "id": "simple_python_5",
+    "id": "simple_python_6",
     "category": "simple_python",
-    "question": "Find all the roots of a quadratic equation given coefficients a = 3, b = -11, and c = -4.",
-    "model_output": [
-      {
-        "solve_quadratic": {
-          "a": 3,
-          "b": -11,
-          "c": -4
-        }
-      }
-    ],
+    "question": "What are the roots of the quadratic equation where a=2, b=5 and c=3 ?",
+    "model_output": [],
     "expected": [
       {
         "solve_quadratic": {
           "a": [
-            3
+            2
           ],
           "b": [
-            -11
+            5
           ],
           "c": [
-            -4
-          ],
-          "root_type": [
-            "all"
+            3
           ]
         }
       }
     ],
     "error": [
-      "Optional parameter 'root_type' not provided and not marked as optional."
+      "Wrong number of functions."
     ]
   },
   {
     "id": "simple_python_8",
     "category": "simple_python",
     "question": "What's the area of a circle with a radius of 10?",
-    "model_output": [
-      {
-        "geometry_area_circle": {
-          "radius": 10,
-          "units": "units"
-        }
-      }
-    ],
+    "model_output": [],
     "expected": [
       {
         "geometry.area_circle": {
@@ -60,21 +42,14 @@
       }
     ],
     "error": [
-      "Invalid value for parameter 'units': 'units'. Expected one of ['meters', '']. Case insensitive."
+      "Wrong number of functions."
     ]
   },
   {
     "id": "simple_python_12",
     "category": "simple_python",
     "question": "Calculate the circumference of a circle with radius 3",
-    "model_output": [
-      {
-        "geometry_circumference": {
-          "radius": 3,
-          "units": "units"
-        }
-      }
-    ],
+    "model_output": [],
     "expected": [
       {
         "geometry.circumference": {
@@ -89,7 +64,7 @@
       }
     ],
     "error": [
-      "Invalid value for parameter 'units': 'units'. Expected one of ['cm', '']. Case insensitive."
+      "Wrong number of functions."
     ]
   },
   {
@@ -133,17 +108,146 @@
     ]
   },
   {
-    "id": "simple_python_35",
+    "id": "simple_python_17",
     "category": "simple_python",
-    "question": "Find an all vegan restaurant in New York that opens until at least 11 PM.",
-    "model_output": [
+    "question": "Find the prime factors of 450",
+    "model_output": [],
+    "expected": [
       {
-        "vegan_restaurant_find_nearby": {
-          "location": "New York",
-          "operating_hours": 23
+        "get_prime_factors": {
+          "number": [
+            450
+          ],
+          "formatted": [
+            true,
+            ""
+          ]
         }
       }
     ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "simple_python_23",
+    "category": "simple_python",
+    "question": "What is the prime factorization of the number 60? Return them in the form of dictionary",
+    "model_output": [],
+    "expected": [
+      {
+        "prime_factorize": {
+          "number": [
+            60
+          ],
+          "return_type": [
+            "dictionary"
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "simple_python_27",
+    "category": "simple_python",
+    "question": "Calculate the final velocity of a vehicle after accelerating at 2 meters/second^2 for a duration of 5 seconds, starting from a speed of 10 meters/second.",
+    "model_output": [],
+    "expected": [
+      {
+        "final_velocity": {
+          "initial_velocity": [
+            10
+          ],
+          "acceleration": [
+            2
+          ],
+          "time": [
+            5
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "simple_python_32",
+    "category": "simple_python",
+    "question": "Calculate the final speed of an object dropped from 100 m without air resistance.",
+    "model_output": [],
+    "expected": [
+      {
+        "calculate_final_speed": {
+          "initial_velocity": [
+            0
+          ],
+          "height": [
+            100
+          ],
+          "gravity": [
+            9.8,
+            ""
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "simple_python_34",
+    "category": "simple_python",
+    "question": "Create an itinerary for a 7 days trip to Tokyo with daily budgets not exceeding $100 and prefer exploring nature.",
+    "model_output": [
+      {
+        "travel_itinerary_generator": {
+          "daily_budget": 100,
+          "days": 7,
+          "destination": "Tokyo",
+          "exploration_type": "nature"
+        }
+      },
+      {
+        "travel_itinerary_generator": {
+          "daily_budget": 100,
+          "days": 7,
+          "destination": "Tokyo",
+          "exploration_type": "nature"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "travel_itinerary_generator": {
+          "destination": [
+            "Tokyo"
+          ],
+          "days": [
+            7
+          ],
+          "daily_budget": [
+            100
+          ],
+          "exploration_type": [
+            "nature"
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "simple_python_35",
+    "category": "simple_python",
+    "question": "Find an all vegan restaurant in New York that opens until at least 11 PM.",
+    "model_output": [],
     "expected": [
       {
         "vegan_restaurant.find_nearby": {
@@ -157,14 +261,191 @@
       }
     ],
     "error": [
-      "Invalid value for parameter 'location': 'New York'. Expected one of ['New York, NY']. Case insensitive."
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "simple_python_38",
+    "category": "simple_python",
+    "question": "What is the electrostatic potential between two charged bodies of 1e-9 and 2e-9 of distance 0.05?",
+    "model_output": [
+      {
+        "calculate_electrostatic_potential": {
+          "charge1": 1.0,
+          "charge2": 2.0,
+          "constant": 9.0,
+          "distance": 0.05
+        }
+      },
+      {
+        "calculate_electrostatic_potential": {
+          "charge1": 1.0,
+          "charge2": 2.0,
+          "constant": 9.0,
+          "distance": 0.05
+        }
+      }
+    ],
+    "expected": [
+      {
+        "calculate_electrostatic_potential": {
+          "charge1": [
+            1e-09
+          ],
+          "charge2": [
+            2e-09
+          ],
+          "distance": [
+            0.05
+          ],
+          "constant": [
+            "",
+            8990000000.0
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "multiple_0",
+    "category": "multiple",
+    "question": "Can I find the dimensions and properties of a triangle, if I know its three sides are 5 units, 4 units and 3 units long?",
+    "model_output": [
+      {
+        "triangle_properties_get": {
+          "get_angles": true,
+          "get_area": true,
+          "get_perimeter": true,
+          "side1": 5,
+          "side2": 4,
+          "side3": 3
+        }
+      },
+      {
+        "circle_properties_get": {
+          "radius": 0.0
+        }
+      }
+    ],
+    "expected": [
+      {
+        "triangle_properties.get": {
+          "side1": [
+            5
+          ],
+          "side2": [
+            4
+          ],
+          "side3": [
+            3
+          ],
+          "get_area": [
+            "",
+            true
+          ],
+          "get_perimeter": [
+            "",
+            true
+          ],
+          "get_angles": [
+            "",
+            true
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "multiple_4",
+    "category": "multiple",
+    "question": "Can you calculate the displacement of a car moving at an initial speed of 20 m/s and then accelerates at 10 m/s^2 for 5 seconds? (assuming a straight line motion)",
+    "model_output": [
+      {
+        "kinematics_calculate_displacement": {
+          "acceleration": 10,
+          "initial_speed": 20,
+          "rounding": 2,
+          "time": 5
+        }
+      },
+      {
+        "kinematics_calculate_final_speed": {
+          "acceleration": 10,
+          "initial_speed": 20,
+          "rounding": 2,
+          "time": 5
+        }
+      },
+      {
+        "kinematics_calculate_displacement": {
+          "acceleration": 10,
+          "initial_speed": 20,
+          "rounding": 2,
+          "time": 5
+        }
+      },
+      {
+        "kinematics_calculate_final_speed": {
+          "acceleration": 10,
+          "initial_speed": 20,
+          "rounding": 2,
+          "time": 5
+        }
+      }
+    ],
+    "expected": [
+      {
+        "kinematics.calculate_displacement": {
+          "initial_speed": [
+            20
+          ],
+          "acceleration": [
+            10
+          ],
+          "time": [
+            5
+          ],
+          "rounding": [
+            "",
+            2
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
     ]
   },
   {
     "id": "multiple_5",
     "category": "multiple",
     "question": "What is the wind speed and temperature in location given by coordinates 46.603354,1.8883340 on December 13, 2019?",
-    "model_output": [],
+    "model_output": [
+      {
+        "weather_get_forecast_by_coordinates": {
+          "coordinates": [
+            46.603354,
+            1.888334
+          ],
+          "days_ahead": 7
+        }
+      },
+      {
+        "weather_get_by_coordinates_date": {
+          "coordinates": [
+            46.603354,
+            1.888334
+          ],
+          "date": "2019-12-13"
+        }
+      }
+    ],
     "expected": [
       {
         "weather.get_by_coordinates_date": {
@@ -185,10 +466,57 @@
     ]
   },
   {
+    "id": "multiple_7",
+    "category": "multiple",
+    "question": "How to assess the population growth in deer and their impact on woodland in Washington state over the past decade?",
+    "model_output": [
+      {
+        "wildlife_population_assess_growth": {
+          "duration": 10,
+          "location": "Washington state",
+          "species": "deer"
+        }
+      },
+      {
+        "ecological_impact_analyze": {
+          "ecosystem": "woodland",
+          "location": "Washington state",
+          "species": "deer",
+          "timeframe": 10
+        }
+      }
+    ],
+    "expected": [
+      {
+        "wildlife_population.assess_growth": {
+          "species": [
+            "deer",
+            "Deer"
+          ],
+          "location": [
+            "Washington state",
+            "WA",
+            "Washington"
+          ],
+          "duration": [
+            10
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
     "id": "multiple_8",
     "category": "multiple",
     "question": "Find a 3 bedroom villa for sale within $300,000 to $400,000 budget in San Diego.",
-    "model_output": [],
+    "model_output": [
+      {
+        "realestate_find_properties": {}
+      }
+    ],
     "expected": [
       {
         "realestate.find_properties": {
@@ -218,7 +546,7 @@
       }
     ],
     "error": [
-      "Wrong number of functions."
+      "Missing required parameter: 'location'."
     ]
   },
   {
@@ -229,12 +557,12 @@
       {
         "database_modify_columns": {
           "db_name": "personal_data",
+          "table": "employees",
           "operation": "delete",
           "columns": [
             "email",
             "ssn"
-          ],
-          "table": "employees"
+          ]
         }
       }
     ],
@@ -284,27 +612,43 @@
     ]
   },
   {
-    "id": "multiple_12",
+    "id": "multiple_14",
     "category": "multiple",
-    "question": "What is the year over year growth rate for company 'Tech Inc' with revenues of $1M in 2019 and $1.2M in 2020?",
-    "model_output": [],
+    "question": "Calculate the depreciated value of a property costing $200,000 with an annual depreciation rate of 3% for 5 years.",
+    "model_output": [
+      {
+        "finance_property_depreciation": {
+          "depreciation_rate": 3,
+          "initial_cost": 200000,
+          "monthly": false,
+          "years": 5
+        }
+      },
+      {
+        "finance_property_depreciation": {
+          "depreciation_rate": 3,
+          "initial_cost": 200000,
+          "monthly": false,
+          "years": 5
+        }
+      }
+    ],
     "expected": [
       {
-        "corporate_finance.calculate_YOY_growth_rate": {
-          "company_name": [
-            "Tech Inc"
+        "finance.property_depreciation": {
+          "initial_cost": [
+            200000
           ],
-          "year1": [
-            2019
+          "depreciation_rate": [
+            3
           ],
-          "year1_revenue": [
-            1000000
+          "years": [
+            5
           ],
-          "year2": [
-            2020
-          ],
-          "year2_revenue": [
-            1200000
+          "monthly": [
+            false,
+            true,
+            ""
           ]
         }
       }
@@ -314,28 +658,91 @@
     ]
   },
   {
-    "id": "multiple_17",
+    "id": "multiple_18",
     "category": "multiple",
-    "question": "Find the conversion rate from Euro to Dollar at January 1, 2022",
+    "question": "Who were the main participants and what was the location of the Battle of Stalingrad?",
+    "model_output": [
+      {
+        "european_history_battle_details": {
+          "battle": "Stalingrad"
+        }
+      },
+      {
+        "european_history_leader_info": {
+          "leader": "Adolf Hitler"
+        }
+      }
+    ],
+    "expected": [
+      {
+        "european_history.battle_details": {
+          "battle": [
+            "Battle of Stalingrad",
+            "Stalingrad"
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "multiple_19",
+    "category": "multiple",
+    "question": "What are the three great Schism in Christianity history?",
     "model_output": [],
     "expected": [
       {
-        "currency_conversion.get_rate": {
-          "from_currency": [
-            "EUR",
-            "Euro"
+        "religion_history.get_schisms": {
+          "religion": [
+            "Christianity"
           ],
-          "to_currency": [
-            "Dollar",
-            "USD"
+          "count": [
+            3
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "multiple_21",
+    "category": "multiple",
+    "question": "I want to generate a sound of 440Hz frequency for 5 seconds. What is the function and how can I use it?",
+    "model_output": [],
+    "expected": [
+      {
+        "generate_sound_wave": {
+          "frequency": [
+            440
           ],
-          "date": [
-            "2022-01-01",
-            "01/01/2022",
-            "1/1/2022",
-            "Jan.1,2022",
-            "January 1, 2022",
-            "2022-1-1"
+          "duration": [
+            5
+          ],
+          "wave_type": [
+            "sine",
+            ""
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "multiple_22",
+    "category": "multiple",
+    "question": "What is the record for the most points scored by a single player in an NBA game?",
+    "model_output": [],
+    "expected": [
+      {
+        "sports_data.basketball.most_points_single_game": {
+          "league": [
+            "NBA"
           ]
         }
       }
@@ -349,6 +756,18 @@
     "category": "parallel",
     "question": "Play songs from the artists Taylor Swift and Maroon 5, with a play time of 20 minutes and 15 minutes respectively, on Spotify.",
     "model_output": [
+      {
+        "spotify_play": {
+          "artist": "Taylor Swift",
+          "duration": 1200
+        }
+      },
+      {
+        "spotify_play": {
+          "artist": "Maroon 5",
+          "duration": 900
+        }
+      },
       {
         "spotify_play": {
           "artist": "Taylor Swift",
@@ -385,147 +804,63 @@
       }
     ],
     "error": [
-      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
-      {
-        "Model Result Index 0": {
-          "sub_error": [
-            "Invalid value for parameter 'duration': 1200. Expected one of [20]."
-          ],
-          "sub_error_type": "value_error:others",
-          "model_output_item": {
-            "spotify_play": {
-              "artist": "Taylor Swift",
-              "duration": 1200
-            }
-          },
-          "possible_answer_item": {
-            "spotify.play": {
-              "artist": [
-                "Taylor Swift"
-              ],
-              "duration": [
-                20
-              ]
-            }
-          }
-        }
-      },
-      {
-        "Model Result Index 1": {
-          "sub_error": [
-            "Invalid value for parameter 'artist': 'Maroon 5'. Expected one of ['Taylor Swift']. Case insensitive."
-          ],
-          "sub_error_type": "value_error:string",
-          "model_output_item": {
-            "spotify_play": {
-              "artist": "Maroon 5",
-              "duration": 900
-            }
-          },
-          "possible_answer_item": {
-            "spotify.play": {
-              "artist": [
-                "Taylor Swift"
-              ],
-              "duration": [
-                20
-              ]
-            }
-          }
-        }
-      }
-    ]
-  },
-  {
-    "id": "parallel_2",
-    "category": "parallel",
-    "question": "Calculate the resistance of a wire with a length of 5m and cross sectional area 0.01m² with resistivity of copper and aluminum",
-    "model_output": [
-      {
-        "calculate_resistance": {
-          "area": 0.01,
-          "length": 5,
-          "resistivity": "copper"
-        }
-      }
-    ],
-    "expected": [
-      {
-        "calculate_resistance": {
-          "length": [
-            5
-          ],
-          "area": [
-            0.01
-          ],
-          "resistivity": [
-            "copper",
-            ""
-          ]
-        }
-      },
-      {
-        "calculate_resistance": {
-          "length": [
-            5
-          ],
-          "area": [
-            0.01
-          ],
-          "resistivity": [
-            "aluminum"
-          ]
-        }
-      }
-    ],
-    "error": [
       "Wrong number of functions."
     ]
   },
   {
-    "id": "parallel_3",
+    "id": "parallel_4",
     "category": "parallel",
-    "question": "Get the protein sequence of human HbA1c, normal hemoglobin, and rat hemoglobin and their 3D models",
+    "question": "Calculate the body mass index for a person who is 6 feet tall and weighs 80 kg, also for a person who is 5.6 feet and weighs 60 kg.",
     "model_output": [
       {
-        "protein_info_get_sequence_and_3D": {
-          "protein_name": "HbA1c",
-          "model_3d": true
+        "calculate_bmi": {
+          "height": 6.0,
+          "weight": 80
+        }
+      },
+      {
+        "calculate_bmi": {
+          "height": 5.6,
+          "weight": 60
+        }
+      },
+      {
+        "calculate_bmi": {
+          "height": 5.6,
+          "weight": 60
+        }
+      },
+      {
+        "calculate_bmi": {
+          "height": 6.0,
+          "weight": 80
+        }
+      },
+      {
+        "calculate_bmi": {
+          "height": 5.6,
+          "weight": 60
         }
       }
     ],
     "expected": [
       {
-        "protein_info.get_sequence_and_3D": {
-          "protein_name": [
-            "human HbA1c",
-            "HbA1c"
+        "calculate_bmi": {
+          "height": [
+            6.0
           ],
-          "model_3d": [
-            true,
-            ""
+          "weight": [
+            80
           ]
         }
       },
       {
-        "protein_info.get_sequence_and_3D": {
-          "protein_name": [
-            "normal hemoglobin"
+        "calculate_bmi": {
+          "height": [
+            5.6
           ],
-          "model_3d": [
-            true,
-            ""
-          ]
-        }
-      },
-      {
-        "protein_info.get_sequence_and_3D": {
-          "protein_name": [
-            "rat hemoglobin"
-          ],
-          "model_3d": [
-            true,
-            ""
+          "weight": [
+            60
           ]
         }
       }
@@ -545,6 +880,25 @@
             "Friends",
             "The Office",
             "Stranger Things"
+          ],
+          "sort_by_rating": true,
+          "streaming_service": "Netflix"
+        }
+      },
+      {
+        "streaming_services_shows_list_and_ratings": {
+          "show_list": [
+            "The Office",
+            "Stranger Things"
+          ],
+          "sort_by_rating": true,
+          "streaming_service": "Hulu"
+        }
+      },
+      {
+        "streaming_services_shows_list_and_ratings": {
+          "show_list": [
+            "Friends"
           ],
           "sort_by_rating": true,
           "streaming_service": "Netflix"
@@ -655,72 +1009,29 @@
     ]
   },
   {
-    "id": "parallel_8",
+    "id": "parallel_7",
     "category": "parallel",
-    "question": "Fetch the population of New York City, NY,  and Los Angeles, CA from US Census Database, and also get the population data for Alaska state and USA",
+    "question": "Find the factorial of 5,10 and 15.",
     "model_output": [],
     "expected": [
       {
-        "database_us_census.get_population": {
-          "area": [
-            "New York City",
-            "NY",
-            "New York City, NY",
-            "NYC"
-          ],
-          "type": [
-            "city"
-          ],
-          "year": [
-            "",
-            2000
+        "math.factorial": {
+          "number": [
+            5
           ]
         }
       },
       {
-        "database_us_census.get_population": {
-          "area": [
-            "Los Angeles",
-            "Los Angeles, CA",
-            "CA",
-            "Los Angeles, CA"
-          ],
-          "type": [
-            "city"
-          ],
-          "year": [
-            "",
-            2000
+        "math.factorial": {
+          "number": [
+            10
           ]
         }
       },
       {
-        "database_us_census.get_population": {
-          "area": [
-            "Alaska"
-          ],
-          "type": [
-            "state"
-          ],
-          "year": [
-            "",
-            2000
-          ]
-        }
-      },
-      {
-        "database_us_census.get_population": {
-          "area": [
-            "USA",
-            "United States",
-            "United States of America"
-          ],
-          "type": [
-            "country"
-          ],
-          "year": [
-            "",
-            2000
+        "math.factorial": {
+          "number": [
+            15
           ]
         }
       }
@@ -737,9 +1048,26 @@
       {
         "find_movie_showing": {
           "location": "San Diego, CA",
-          "movie": "Tenet",
+          "movie": [
+            "Tenet",
+            "No Time To Die"
+          ],
           "time": [
-            "5:00 PM"
+            "5:00 PM",
+            "7:30 PM"
+          ]
+        }
+      },
+      {
+        "find_movie_showing": {
+          "location": "San Diego, CA",
+          "movie": [
+            "Tenet",
+            "No Time To Die"
+          ],
+          "time": [
+            "5:00 PM",
+            "7:30 PM"
           ]
         }
       }
@@ -791,59 +1119,196 @@
       }
     ],
     "error": [
+      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
+      {
+        "Model Result Index 0": {
+          "sub_error": [
+            "Invalid value for parameter 'movie': ['Tenet', 'No Time To Die']. Expected one of [['Tenet']]."
+          ],
+          "sub_error_type": "value_error:list/tuple",
+          "model_output_item": {
+            "find_movie_showing": {
+              "location": "San Diego, CA",
+              "movie": [
+                "Tenet",
+                "No Time To Die"
+              ],
+              "time": [
+                "5:00 PM",
+                "7:30 PM"
+              ]
+            }
+          },
+          "possible_answer_item": {
+            "find_movie_showing": {
+              "location": [
+                "San Diego",
+                "San Diego, CA",
+                "CA"
+              ],
+              "movie": [
+                [
+                  "Tenet"
+                ]
+              ],
+              "time": [
+                [
+                  "5 pm"
+                ],
+                [
+                  "17:00"
+                ]
+              ]
+            }
+          }
+        }
+      },
+      {
+        "Model Result Index 1": {
+          "sub_error": [
+            "Invalid value for parameter 'movie': ['Tenet', 'No Time To Die']. Expected one of [['Tenet']]."
+          ],
+          "sub_error_type": "value_error:list/tuple",
+          "model_output_item": {
+            "find_movie_showing": {
+              "location": "San Diego, CA",
+              "movie": [
+                "Tenet",
+                "No Time To Die"
+              ],
+              "time": [
+                "5:00 PM",
+                "7:30 PM"
+              ]
+            }
+          },
+          "possible_answer_item": {
+            "find_movie_showing": {
+              "location": [
+                "San Diego",
+                "San Diego, CA",
+                "CA"
+              ],
+              "movie": [
+                [
+                  "Tenet"
+                ]
+              ],
+              "time": [
+                [
+                  "5 pm"
+                ],
+                [
+                  "17:00"
+                ]
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "parallel_10",
+    "category": "parallel",
+    "question": "Compute the Pythagorean Theorem of two side lengths: 3 and 4, 5 and 12.",
+    "model_output": [],
+    "expected": [
+      {
+        "math.pythagoras": {
+          "a": [
+            3
+          ],
+          "b": [
+            4
+          ]
+        }
+      },
+      {
+        "math.pythagoras": {
+          "a": [
+            5
+          ],
+          "b": [
+            12
+          ]
+        }
+      }
+    ],
+    "error": [
       "Wrong number of functions."
     ]
   },
   {
-    "id": "parallel_14",
+    "id": "parallel_15",
     "category": "parallel",
-    "question": "Calculate the Present Value of an investment paying $1000 per year, with an interest rate of 5%, for 10, 20 and 30 years.",
+    "question": "What will be the capital gains tax for a short term capital gains of $15000, long term gains of $25000 in the state of California and $20000 short term, $50000 long term in Florida?",
     "model_output": [
       {
-        "calculate_present_value": {
-          "interest_rate": 0.05,
-          "payment_per_year": 1000,
-          "years": 10
+        "calculate_capital_gains_tax": {
+          "short_term_gain": "short_term_gain",
+          "long_term_gain": "long_term_gain",
+          "state": "California"
         }
       }
     ],
     "expected": [
       {
-        "calculate_present_value": {
-          "payment_per_year": [
-            1000
+        "calculate_capital_gains_tax": {
+          "short_term_gain": [
+            15000
           ],
-          "interest_rate": [
-            0.05
+          "long_term_gain": [
+            25000
           ],
-          "years": [
-            20
+          "state": [
+            "CA",
+            "California"
           ]
         }
       },
       {
-        "calculate_present_value": {
-          "payment_per_year": [
-            1000
+        "calculate_capital_gains_tax": {
+          "short_term_gain": [
+            20000
           ],
-          "interest_rate": [
-            0.05
+          "long_term_gain": [
+            50000
           ],
-          "years": [
-            30
+          "state": [
+            "FL",
+            "Florida"
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "parallel_16",
+    "category": "parallel",
+    "question": "Calculate return on investment for an initial investment of $2000 with a gain of $500. Do the same calculation for an initial investment of $5000 with a loss of $1000.",
+    "model_output": [],
+    "expected": [
+      {
+        "calculate_return_on_investment": {
+          "initial_investment": [
+            2000
+          ],
+          "gain_loss": [
+            500
           ]
         }
       },
       {
-        "calculate_present_value": {
-          "payment_per_year": [
-            1000
+        "calculate_return_on_investment": {
+          "initial_investment": [
+            5000
           ],
-          "interest_rate": [
-            0.05
-          ],
-          "years": [
-            10
+          "gain_loss": [
+            -1000
           ]
         }
       }
@@ -863,7 +1328,52 @@
             "price",
             "volume"
           ],
-          "symbol": "MSFT"
+          "symbol": "AAPL"
+        }
+      },
+      {
+        "get_stock_data": {
+          "data_points": [
+            "price",
+            "volume"
+          ],
+          "symbol": "GOOGL"
+        }
+      },
+      {
+        "get_stock_data": {
+          "data_points": [
+            "price",
+            "volume"
+          ],
+          "symbol": "MS"
+        }
+      },
+      {
+        "get_stock_data": {
+          "data_points": [
+            "price",
+            "volume"
+          ],
+          "symbol": "MK"
+        }
+      },
+      {
+        "get_stock_data": {
+          "data_points": [
+            "price",
+            "volume"
+          ],
+          "symbol": "NASDAQ:NYSE"
+        }
+      },
+      {
+        "get_stock_data": {
+          "data_points": [
+            "price",
+            "volume"
+          ],
+          "symbol": "AAPL"
         }
       }
     ],
@@ -932,9 +1442,23 @@
     "model_output": [
       {
         "financials_calculate_future_value": {
-          "present_value": 1000,
           "annual_interest_rate": 0.05,
-          "number_of_years": 1.5
+          "number_of_years": 1,
+          "present_value": 1000
+        }
+      },
+      {
+        "financials_calculate_future_value": {
+          "annual_interest_rate": 0.05,
+          "number_of_years": 2,
+          "present_value": 1000
+        }
+      },
+      {
+        "financials_calculate_future_value": {
+          "annual_interest_rate": 0.05,
+          "number_of_years": 10,
+          "present_value": 1000
         }
       }
     ],
@@ -980,59 +1504,115 @@
       }
     ],
     "error": [
-      "Wrong number of functions."
+      "Could not find a matching function among index [1, 2] of model output for index 1 of possible answers.",
+      {
+        "Model Result Index 1": {
+          "sub_error": [
+            "Invalid value for parameter 'number_of_years': 2. Expected one of [5]."
+          ],
+          "sub_error_type": "value_error:others",
+          "model_output_item": {
+            "financials_calculate_future_value": {
+              "annual_interest_rate": 0.05,
+              "number_of_years": 2,
+              "present_value": 1000
+            }
+          },
+          "possible_answer_item": {
+            "financials.calculate_future_value": {
+              "present_value": [
+                1000
+              ],
+              "annual_interest_rate": [
+                0.05
+              ],
+              "number_of_years": [
+                5
+              ]
+            }
+          }
+        }
+      },
+      {
+        "Model Result Index 2": {
+          "sub_error": [
+            "Invalid value for parameter 'number_of_years': 10. Expected one of [5]."
+          ],
+          "sub_error_type": "value_error:others",
+          "model_output_item": {
+            "financials_calculate_future_value": {
+              "annual_interest_rate": 0.05,
+              "number_of_years": 10,
+              "present_value": 1000
+            }
+          },
+          "possible_answer_item": {
+            "financials.calculate_future_value": {
+              "present_value": [
+                1000
+              ],
+              "annual_interest_rate": [
+                0.05
+              ],
+              "number_of_years": [
+                5
+              ]
+            }
+          }
+        }
+      }
     ]
   },
   {
-    "id": "parallel_19",
+    "id": "parallel_24",
     "category": "parallel",
-    "question": "Calculate the monthly mortgage payment for a loan amount of $400,000, with an annual interest rate of 4% and a loan term of 15, 20 and 30 years.",
+    "question": "Can you find me case law details of Case No 28473 and 64725, their history and details of litigants?",
     "model_output": [
       {
-        "calculate_mortgage_payment": {
-          "loan_amount": 400000,
-          "interest_rate": 0.04,
-          "loan_term": 15
+        "law_case_get_details": {
+          "case_number": "28473"
+        }
+      },
+      {
+        "law_case_get_details": {
+          "case_number": "64725"
+        }
+      },
+      {
+        "law_case_get_details": {
+          "case_number": "28473"
+        }
+      },
+      {
+        "law_case_get_details": {
+          "case_number": "64725"
         }
       }
     ],
     "expected": [
       {
-        "calculate_mortgage_payment": {
-          "loan_amount": [
-            400000
+        "law_case.get_details": {
+          "case_number": [
+            "28473"
           ],
-          "interest_rate": [
-            0.04
+          "include_history": [
+            true
           ],
-          "loan_term": [
-            15
+          "include_litigants": [
+            true
           ]
         }
       },
       {
-        "calculate_mortgage_payment": {
-          "loan_amount": [
-            400000
+        "law_case.get_details": {
+          "case_number": [
+            "64725"
           ],
-          "interest_rate": [
-            0.04
+          "include_history": [
+            true
           ],
-          "loan_term": [
-            20
-          ]
-        }
-      },
-      {
-        "calculate_mortgage_payment": {
-          "loan_amount": [
-            400000
-          ],
-          "interest_rate": [
-            0.04
-          ],
-          "loan_term": [
-            30
+          "include_litigants": [
+            true
           ]
         }
       }
@@ -1042,72 +1622,22 @@
     ]
   },
   {
-    "id": "parallel_20",
+    "id": "parallel_25",
     "category": "parallel",
-    "question": "Can you check my loan eligibility for a home loan of amount $500,000 from HSBC with annual income $100,000 and for Wells Fargo for a amount of $700,000 with annual income of $120,000?",
+    "question": "List all cases against a company named 'Dara Inc' filed in 2019, Also list cases filed in the year 2018 against the same company.",
     "model_output": [
       {
-        "loan_eligibility_check": {
-          "financial_institution": "HSBC",
-          "loan_amount": 500000,
-          "annual_income": 1000000.0
-        }
-      }
-    ],
-    "expected": [
-      {
-        "loan_eligibility_check": {
-          "financial_institution": [
-            "HSBC"
-          ],
-          "loan_amount": [
-            500000
-          ],
-          "annual_income": [
-            100000
-          ]
-        }
-      },
-      {
-        "loan_eligibility_check": {
-          "financial_institution": [
-            "Wells Fargo"
-          ],
-          "loan_amount": [
-            700000
-          ],
-          "annual_income": [
-            120000
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_21",
-    "category": "parallel",
-    "question": "Show me all individuals who were convicted for money laundering from San Francisco in 2019 and ones convicted for the same in Texas in 2018",
-    "model_output": [
-      {
-        "law_crimes_search": {
-          "crime": "money laundering",
-          "location": "San Francisco",
+        "lawsuit_lookup": {
+          "company_name": "Dara Inc",
           "year": 2019
         }
       }
     ],
     "expected": [
       {
-        "law_crimes.search": {
-          "crime": [
-            "money laundering"
-          ],
-          "location": [
-            "San Francisco",
-            "SF"
+        "lawsuit.lookup": {
+          "company_name": [
+            "Dara Inc"
           ],
           "year": [
             2019
@@ -1115,144 +1645,12 @@
         }
       },
       {
-        "law_crimes.search": {
-          "crime": [
-            "money laundering"
-          ],
-          "location": [
-            "Texas",
-            "TX"
+        "lawsuit.lookup": {
+          "company_name": [
+            "Dara Inc"
           ],
           "year": [
             2018
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_22",
-    "category": "parallel",
-    "question": "What is the status and scheduled trial date for case number XY1234 in Los Angeles County Court, and case number GH5678 in Orange County Court?",
-    "model_output": [
-      {
-        "court_info_get_case_status": {
-          "case_number": "XY1234",
-          "court": "Los Angeles County Court",
-          "details": "status,trial_date"
-        }
-      }
-    ],
-    "expected": [
-      {
-        "court_info.get_case_status": {
-          "case_number": [
-            "XY1234"
-          ],
-          "court": [
-            "Los Angeles County Court",
-            "Los Angeles",
-            "Los Angeles, CA",
-            "LA"
-          ],
-          "details": [
-            "status",
-            ""
-          ]
-        }
-      },
-      {
-        "court_info.get_case_status": {
-          "case_number": [
-            "GH5678"
-          ],
-          "court": [
-            "Orange County Court",
-            "Orange County",
-            "OC"
-          ],
-          "details": [
-            "status",
-            ""
-          ]
-        }
-      },
-      {
-        "court_info.get_case_status": {
-          "case_number": [
-            "XY1234"
-          ],
-          "court": [
-            "Los Angeles County Court",
-            "Los Angeles",
-            "Los Angeles, CA",
-            "LA"
-          ],
-          "details": [
-            "trial_date"
-          ]
-        }
-      },
-      {
-        "court_info.get_case_status": {
-          "case_number": [
-            "GH5678"
-          ],
-          "court": [
-            "Orange County Court",
-            "Orange County",
-            "OC"
-          ],
-          "details": [
-            "trial_date"
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_23",
-    "category": "parallel",
-    "question": "Please calculate the amount of alimony the payor spouse would have to pay to the recipient spouse in California for the next 10 years and 20 years if the payor spouse's monthly gross income is $10,000 and the recipient spouse's monthly gross income is $3,000.",
-    "model_output": [
-      {
-        "alimony_calculator_ca_calculate": {
-          "duration": 20,
-          "payor_income": 10000,
-          "recipient_income": 3000
-        }
-      }
-    ],
-    "expected": [
-      {
-        "alimony_calculator.ca.calculate": {
-          "payor_income": [
-            10000
-          ],
-          "recipient_income": [
-            3000
-          ],
-          "duration": [
-            10
-          ]
-        }
-      },
-      {
-        "alimony_calculator.ca.calculate": {
-          "payor_income": [
-            10000
-          ],
-          "recipient_income": [
-            3000
-          ],
-          "duration": [
-            20
           ]
         }
       }
@@ -1361,70 +1759,6 @@
     ]
   },
   {
-    "id": "parallel_27",
-    "category": "parallel",
-    "question": "Find a nature reserve around Berkeley within 10 kilometers that has picnic tables and public restrooms, as well as one around Tokyo within 5 kilometers that has playgrounds and biking trails.",
-    "model_output": [
-      {
-        "nature_reserve_find_nearby": {
-          "amenities": [
-            "Picnic Tables",
-            "Public Restrooms"
-          ],
-          "location": "Berkeley",
-          "proximity": 10
-        }
-      }
-    ],
-    "expected": [
-      {
-        "nature_reserve.find_nearby": {
-          "location": [
-            "Berkeley",
-            "Berkeley,California",
-            "CA"
-          ],
-          "amenities": [
-            [
-              "Picnic Tables",
-              "Public Restrooms"
-            ],
-            [
-              "Public Restrooms",
-              "Picnic Tables"
-            ]
-          ],
-          "proximity": [
-            10
-          ]
-        }
-      },
-      {
-        "nature_reserve.find_nearby": {
-          "location": [
-            "Tokyo"
-          ],
-          "amenities": [
-            [
-              "Playgrounds",
-              "Biking Trails"
-            ],
-            [
-              "Biking Trails",
-              "Playgrounds"
-            ]
-          ],
-          "proximity": [
-            5
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_29",
     "category": "parallel",
     "question": "Find out how much waste a family of four generates in Los Angeles, assuming two children and two adults. Also, calculate waste production for a bachelor in New York.",
@@ -1432,13 +1766,18 @@
       {
         "waste_calculation_calculate": {
           "location": "Los Angeles",
-          "population": "2 adults, 2 children"
+          "population": {
+            "adults": 2,
+            "children": 2
+          }
         }
       },
       {
         "waste_calculation_calculate": {
           "location": "New York",
-          "population": "1 bachelor"
+          "population": {
+            "bachelor": 1
+          }
         }
       }
     ],
@@ -1495,13 +1834,16 @@
       {
         "Model Result Index 0": {
           "sub_error": [
-            "Incorrect type for parameter 'population'. Expected type dict, got str. Parameter value: '2 adults, 2 children'."
+            "Missing dict key parameter: 'singles'."
           ],
-          "sub_error_type": "type_error:simple",
+          "sub_error_type": "value_error:dict_key",
           "model_output_item": {
             "waste_calculation_calculate": {
               "location": "Los Angeles",
-              "population": "2 adults, 2 children"
+              "population": {
+                "adults": 2,
+                "children": 2
+              }
             }
           },
           "possible_answer_item": {
@@ -1537,7 +1879,9 @@
           "model_output_item": {
             "waste_calculation_calculate": {
               "location": "New York",
-              "population": "1 bachelor"
+              "population": {
+                "bachelor": 1
+              }
             }
           },
           "possible_answer_item": {
@@ -1564,60 +1908,6 @@
           }
         }
       }
-    ]
-  },
-  {
-    "id": "parallel_30",
-    "category": "parallel",
-    "question": "Book a flight from San Francisco to Tokyo on May 3rd 2022 and another flight from Tokyo to Sydney on May 18th 2022.",
-    "model_output": [
-      {
-        "book_flight": {
-          "departure_city": "San Francisco",
-          "destination_city": "Tokyo",
-          "date": "2022-05-03"
-        }
-      }
-    ],
-    "expected": [
-      {
-        "book_flight": {
-          "departure_city": [
-            "San Francisco",
-            "SF"
-          ],
-          "destination_city": [
-            "Tokyo"
-          ],
-          "date": [
-            "2022-05-03",
-            "05/03/2022",
-            "May 3rd, 2022",
-            "May 3, 2022",
-            "May 3rd 2022"
-          ]
-        }
-      },
-      {
-        "book_flight": {
-          "departure_city": [
-            "Tokyo"
-          ],
-          "destination_city": [
-            "Sydney"
-          ],
-          "date": [
-            "2022-05-18",
-            "05/18/2022",
-            "May 18th, 2022",
-            "May 18, 2022",
-            "May 18th 2022"
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
     ]
   },
   {
@@ -1676,16 +1966,9 @@
     "model_output": [
       {
         "us_history_events_by_presidency": {
-          "end_year": 1865,
           "president_name": "Abraham Lincoln",
+          "end_year": 1865,
           "start_year": 1861
-        }
-      },
-      {
-        "us_history_events_by_presidency": {
-          "end_year": 1797,
-          "president_name": "George Washington",
-          "start_year": 1789
         }
       }
     ],
@@ -1722,117 +2005,6 @@
       }
     ],
     "error": [
-      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
-      {
-        "Model Result Index 0": {
-          "sub_error": [
-            "Invalid value for parameter 'end_year': 1865. Expected one of ['', 2000]."
-          ],
-          "sub_error_type": "value_error:others",
-          "model_output_item": {
-            "us_history_events_by_presidency": {
-              "end_year": 1865,
-              "president_name": "Abraham Lincoln",
-              "start_year": 1861
-            }
-          },
-          "possible_answer_item": {
-            "us_history.events_by_presidency": {
-              "president_name": [
-                "Abraham Lincoln"
-              ],
-              "start_year": [
-                "",
-                0
-              ],
-              "end_year": [
-                "",
-                2000
-              ]
-            }
-          }
-        }
-      },
-      {
-        "Model Result Index 1": {
-          "sub_error": [
-            "Invalid value for parameter 'end_year': 1797. Expected one of ['', 2000]."
-          ],
-          "sub_error_type": "value_error:others",
-          "model_output_item": {
-            "us_history_events_by_presidency": {
-              "end_year": 1797,
-              "president_name": "George Washington",
-              "start_year": 1789
-            }
-          },
-          "possible_answer_item": {
-            "us_history.events_by_presidency": {
-              "president_name": [
-                "Abraham Lincoln"
-              ],
-              "start_year": [
-                "",
-                0
-              ],
-              "end_year": [
-                "",
-                2000
-              ]
-            }
-          }
-        }
-      }
-    ]
-  },
-  {
-    "id": "parallel_33",
-    "category": "parallel",
-    "question": "Find out who was the president of United States in 1980 and 2016, and the vice president in 1975 and 2011.",
-    "model_output": [],
-    "expected": [
-      {
-        "get_president_and_vp": {
-          "year": [
-            1980
-          ],
-          "position": [
-            "president"
-          ]
-        }
-      },
-      {
-        "get_president_and_vp": {
-          "year": [
-            2016
-          ],
-          "position": [
-            "president"
-          ]
-        }
-      },
-      {
-        "get_president_and_vp": {
-          "year": [
-            1975
-          ],
-          "position": [
-            "vice president"
-          ]
-        }
-      },
-      {
-        "get_president_and_vp": {
-          "year": [
-            2011
-          ],
-          "position": [
-            "vice president"
-          ]
-        }
-      }
-    ],
-    "error": [
       "Wrong number of functions."
     ]
   },
@@ -1844,15 +2016,7 @@
       {
         "religion_history_track": {
           "end_year": 1500,
-          "region": "Egypt and Turkey",
-          "religion": "Christianity",
-          "start_year": 100
-        }
-      },
-      {
-        "religion_history_track": {
-          "end_year": 1500,
-          "region": "Egypt and Turkey",
+          "region": "Egypt",
           "religion": "Christianity",
           "start_year": 100
         }
@@ -1893,66 +2057,70 @@
       }
     ],
     "error": [
-      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
+      "Wrong number of functions."
+    ]
+  },
+  {
+    "id": "parallel_35",
+    "category": "parallel",
+    "question": "Fetch the details of the ancient empires Persian Empire and Mauryan Empire with their religious history and influences.",
+    "model_output": [
       {
-        "Model Result Index 0": {
-          "sub_error": [
-            "Invalid value for parameter 'region': 'Egypt and Turkey'. Expected one of ['Egypt']. Case insensitive."
-          ],
-          "sub_error_type": "value_error:string",
-          "model_output_item": {
-            "religion_history_track": {
-              "end_year": 1500,
-              "region": "Egypt and Turkey",
-              "religion": "Christianity",
-              "start_year": 100
-            }
-          },
-          "possible_answer_item": {
-            "religion_history.track": {
-              "region": [
-                "Egypt"
-              ],
-              "religion": [
-                "Christianity"
-              ],
-              "start_year": [
-                100
-              ],
-              "end_year": [
-                1500
-              ]
-            }
-          }
+        "ancient_empires_get_religion_info": {
+          "empire_name": "Mauryan Empire",
+          "include_influences": true
         }
       },
       {
+        "ancient_empires_get_religion_info": {
+          "empire_name": "Mauryan Empire",
+          "include_influences": true
+        }
+      }
+    ],
+    "expected": [
+      {
+        "ancient_empires.get_religion_info": {
+          "empire_name": [
+            "Mauryan Empire"
+          ],
+          "include_influences": [
+            true
+          ]
+        }
+      },
+      {
+        "ancient_empires.get_religion_info": {
+          "empire_name": [
+            "Persian Empire"
+          ],
+          "include_influences": [
+            true
+          ]
+        }
+      }
+    ],
+    "error": [
+      "Could not find a matching function among index [1] of model output for index 1 of possible answers.",
+      {
         "Model Result Index 1": {
           "sub_error": [
-            "Invalid value for parameter 'region': 'Egypt and Turkey'. Expected one of ['Egypt']. Case insensitive."
+            "Invalid value for parameter 'empire_name': 'Mauryan Empire'. Expected one of ['Persian Empire']. Case insensitive."
           ],
           "sub_error_type": "value_error:string",
           "model_output_item": {
-            "religion_history_track": {
-              "end_year": 1500,
-              "region": "Egypt and Turkey",
-              "religion": "Christianity",
-              "start_year": 100
+            "ancient_empires_get_religion_info": {
+              "empire_name": "Mauryan Empire",
+              "include_influences": true
             }
           },
           "possible_answer_item": {
-            "religion_history.track": {
-              "region": [
-                "Egypt"
+            "ancient_empires.get_religion_info": {
+              "empire_name": [
+                "Persian Empire"
               ],
-              "religion": [
-                "Christianity"
-              ],
-              "start_year": [
-                100
-              ],
-              "end_year": [
-                1500
+              "include_influences": [
+                true
               ]
             }
           }
@@ -1964,7 +2132,32 @@
     "id": "parallel_36",
     "category": "parallel",
     "question": "Using watercolor, what combination of colors should I mix to get the color magenta and what quantity for each color? Also, I want to know how to get color navy by using acrylic paint and their respective quantities.",
-    "model_output": [],
+    "model_output": [
+      {
+        "paint_color_mixture": {
+          "color": "magenta",
+          "paint_type": "Watercolor"
+        }
+      },
+      {
+        "paint_color_mixture": {
+          "color": "navy",
+          "paint_type": "Acrylic"
+        }
+      },
+      {
+        "paint_color_mixture": {
+          "color": "magenta",
+          "paint_type": "Watercolor"
+        }
+      },
+      {
+        "paint_color_mixture": {
+          "color": "navy",
+          "paint_type": "Acrylic"
+        }
+      }
+    ],
     "expected": [
       {
         "paint_color_mixture": {
@@ -1996,78 +2189,6 @@
     ]
   },
   {
-    "id": "parallel_37",
-    "category": "parallel",
-    "question": "What are the RGB and HEX color values for navy, purple and maroon? ",
-    "model_output": [
-      {
-        "color_converter_get_color_info": {
-          "color_name": "navy",
-          "conversion_type": [
-            "RGB",
-            "HEX"
-          ]
-        }
-      }
-    ],
-    "expected": [
-      {
-        "color_converter.get_color_info": {
-          "color_name": [
-            "navy"
-          ],
-          "conversion_type": [
-            [
-              "RGB",
-              "HEX"
-            ],
-            [
-              "HEX",
-              "RGB"
-            ]
-          ]
-        }
-      },
-      {
-        "color_converter.get_color_info": {
-          "color_name": [
-            "purple"
-          ],
-          "conversion_type": [
-            [
-              "RGB",
-              "HEX"
-            ],
-            [
-              "HEX",
-              "RGB"
-            ]
-          ]
-        }
-      },
-      {
-        "color_converter.get_color_info": {
-          "color_name": [
-            "maroon"
-          ],
-          "conversion_type": [
-            [
-              "RGB",
-              "HEX"
-            ],
-            [
-              "HEX",
-              "RGB"
-            ]
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_39",
     "category": "parallel",
     "question": "Find opening hours and ticket prices for adults and children for the National Museum in Washington D.C. and the Louvre Museum in Paris.",
@@ -2080,6 +2201,56 @@
             "Child tickets"
           ],
           "location": "Washington D.C."
+        }
+      },
+      {
+        "museum_info_get_info": {
+          "details": [
+            "Opening hours",
+            "Adult tickets",
+            "Child tickets"
+          ],
+          "location": "Paris"
+        }
+      },
+      {
+        "museum_info_get_info": {
+          "details": [
+            "Opening hours",
+            "Adult tickets",
+            "Child tickets"
+          ],
+          "location": "Louvre Museum"
+        }
+      },
+      {
+        "museum_info_get_info": {
+          "details": [
+            "Opening hours",
+            "Adult tickets",
+            "Child tickets"
+          ],
+          "location": "Louvre Museum"
+        }
+      },
+      {
+        "museum_info_get_info": {
+          "details": [
+            "Opening hours",
+            "Adult tickets",
+            "Child tickets"
+          ],
+          "location": "National Museum, Washington D.C."
+        }
+      },
+      {
+        "museum_info_get_info": {
+          "details": [
+            "Opening hours",
+            "Adult tickets",
+            "Child tickets"
+          ],
+          "location": "Louvre Museum, Paris"
         }
       }
     ],
@@ -2169,40 +2340,6 @@
     ]
   },
   {
-    "id": "parallel_multiple_0",
-    "category": "parallel_multiple",
-    "question": "Find the sum of all the multiples of 3 and 5 between 1 and 1000. Also find the product of the first five prime numbers.",
-    "model_output": [],
-    "expected": [
-      {
-        "math_toolkit.sum_of_multiples": {
-          "lower_limit": [
-            1
-          ],
-          "upper_limit": [
-            1000
-          ],
-          "multiples": [
-            [
-              3,
-              5
-            ]
-          ]
-        }
-      },
-      {
-        "math_toolkit.product_of_primes": {
-          "count": [
-            5
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_multiple_2",
     "category": "parallel_multiple",
     "question": "Find the area and perimeter of a circle with a radius of 5 and also find the circumference of a circle with diameter of 10.",
@@ -2210,6 +2347,17 @@
       {
         "circle_calculate_area": {
           "radius": 5
+        }
+      },
+      {
+        "circle_calculate_circumference": {
+          "diameter": 10
+        }
+      },
+      {
+        "rectangle_calculate_perimeter": {
+          "breadth": 5,
+          "length": 10
         }
       }
     ],
@@ -2242,7 +2390,23 @@
         "get_rectangle_property": {
           "area": 15,
           "perimeter": 14,
-          "tolerance": 0.01
+          "property": "length",
+          "tolerance": 0.1
+        }
+      },
+      {
+        "get_rectangle_property": {
+          "area": 15,
+          "perimeter": 14,
+          "property": "width",
+          "tolerance": 0.1
+        }
+      },
+      {
+        "integral": {
+          "a": 7,
+          "b": 7,
+          "function": "integral"
         }
       }
     ],
@@ -2330,32 +2494,59 @@
     ]
   },
   {
-    "id": "parallel_multiple_6",
+    "id": "parallel_multiple_5",
     "category": "parallel_multiple",
-    "question": "Find all prime numbers between 50 and 150. Then get the fibonacci series upto 150.",
+    "question": "Calculate the Greatest Common Divisor (GCD) of 96 and 128, and the least common multiple (LCM) of 15 and 25.",
     "model_output": [
       {
-        "find_prime_numbers": {
-          "start": 50,
-          "end": 150
+        "gcd": {
+          "num1": 96,
+          "num2": 128
+        }
+      },
+      {
+        "lcm": {
+          "num1": 15,
+          "num2": 25
+        }
+      },
+      {
+        "gcd": {
+          "num1": 96,
+          "num2": 128
+        }
+      },
+      {
+        "lcm": {
+          "num1": 15,
+          "num2": 25
+        }
+      },
+      {
+        "lcm": {
+          "num1": 15,
+          "num2": 25
         }
       }
     ],
     "expected": [
       {
-        "find_prime_numbers": {
-          "start": [
-            50
+        "gcd": {
+          "num1": [
+            96
           ],
-          "end": [
-            150
+          "num2": [
+            128
           ]
         }
       },
       {
-        "get_fibonacci_sequence": {
-          "count": [
-            150
+        "lcm": {
+          "num1": [
+            15
+          ],
+          "num2": [
+            25
           ]
         }
       }
@@ -2413,6 +2604,27 @@
           "initial_velocity": 20,
           "time": 6
         }
+      },
+      {
+        "kinematics_distance_traveled": {
+          "acceleration": 5,
+          "initial_velocity": 20,
+          "time": 6
+        }
+      },
+      {
+        "kinematics_final_velocity": {
+          "acceleration": 5,
+          "initial_velocity": 20,
+          "time": 6
+        }
+      },
+      {
+        "kinematics_distance_traveled": {
+          "acceleration": 5,
+          "initial_velocity": 20,
+          "time": 6
+        }
       }
     ],
     "expected": [
@@ -2448,51 +2660,6 @@
     ]
   },
   {
-    "id": "parallel_multiple_9",
-    "category": "parallel_multiple",
-    "question": "Book a flight from Seattle to Boston with American Airlines and book a hotel in Boston for 4 nights. ",
-    "model_output": [
-      {
-        "flight_book": {
-          "_from": "Seattle",
-          "airlines": "American Airlines",
-          "to": "Boston, MA"
-        }
-      }
-    ],
-    "expected": [
-      {
-        "flight_book": {
-          "_from": [
-            "Seattle"
-          ],
-          "to": [
-            "Boston"
-          ],
-          "airlines": [
-            "American Airlines"
-          ]
-        }
-      },
-      {
-        "hotel_book": {
-          "location": [
-            "Boston",
-            "Boston, Massachusetts",
-            "Boston, MA",
-            "Boston,MA"
-          ],
-          "nights": [
-            4
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_multiple_10",
     "category": "parallel_multiple",
     "question": "Buy me a ticket to the Mamma Mia musical for next Friday, June 30th 2023, also get me a train ticket from New York to Chicago for the same day.",
@@ -2500,7 +2667,7 @@
       {
         "musical_ticket_buy": {
           "date": "2023-06-30",
-          "show": "Mamma Mia"
+          "show": "Mamma Mia The Musical"
         }
       }
     ],
@@ -2525,47 +2692,6 @@
           ],
           "date": [
             "2023-06-30"
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_multiple_11",
-    "category": "parallel_multiple",
-    "question": "What is the Electric field at 3m from a point charge with a value of 4C? Also, calculate the magnetic field for an electric current of 0.5A flowing through a solenoid having 25 turns per meter and a length of 2m.",
-    "model_output": [
-      {
-        "physics_electric_field": {
-          "charge": 4.0,
-          "distance": 3.0
-        }
-      }
-    ],
-    "expected": [
-      {
-        "physics.electric_field": {
-          "charge": [
-            4.0
-          ],
-          "distance": [
-            3.0
-          ]
-        }
-      },
-      {
-        "physics.magnetic_field": {
-          "current": [
-            0.5
-          ],
-          "turnsPerMeter": [
-            25.0
-          ],
-          "length": [
-            2.0
           ]
         }
       }
@@ -2622,58 +2748,6 @@
     ]
   },
   {
-    "id": "parallel_multiple_13",
-    "category": "parallel_multiple",
-    "question": "'Calculate the energy required to heat 100 grams of water from 25 degrees Celsius to 100 degrees Celsius in joules, and also calculate the energy required to heat the same mass of Aluminium under same conditions in joules",
-    "model_output": [],
-    "expected": [
-      {
-        "energy_calculator.calculate": {
-          "substance": [
-            "water"
-          ],
-          "mass": [
-            100.0
-          ],
-          "initial_temperature": [
-            25.0
-          ],
-          "final_temperature": [
-            100.0
-          ],
-          "unit": [
-            "joules",
-            ""
-          ]
-        }
-      },
-      {
-        "energy_calculator.calculate": {
-          "substance": [
-            "Aluminium",
-            "aluminium"
-          ],
-          "mass": [
-            100.0
-          ],
-          "initial_temperature": [
-            25.0
-          ],
-          "final_temperature": [
-            100.0
-          ],
-          "unit": [
-            "joules",
-            ""
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_multiple_14",
     "category": "parallel_multiple",
     "question": "Give me the population size of tigers in Bangladesh and India for the last 5 years. Also provide the projected population size of tigers in Nepal and Malaysia for the next 10 years.",
@@ -2683,6 +2757,27 @@
           "country": "Bangladesh",
           "species": "tiger",
           "years": 5
+        }
+      },
+      {
+        "animal_population_get_history": {
+          "country": "Bangladesh",
+          "species": "tiger",
+          "years": 5
+        }
+      },
+      {
+        "animal_population_get_projection": {
+          "country": "Nepal",
+          "species": "tiger",
+          "years": 10
+        }
+      },
+      {
+        "animal_population_get_projection": {
+          "country": "Malaysia",
+          "species": "tiger",
+          "years": 10
         }
       }
     ],
@@ -2745,7 +2840,94 @@
       }
     ],
     "error": [
-      "Wrong number of functions."
+      "Could not find a matching function among index [1, 2, 3] of model output for index 1 of possible answers.",
+      {
+        "Model Result Index 1": {
+          "sub_error": [
+            "Invalid value for parameter 'country': 'Bangladesh'. Expected one of ['India']. Case insensitive."
+          ],
+          "sub_error_type": "value_error:string",
+          "model_output_item": {
+            "animal_population_get_history": {
+              "country": "Bangladesh",
+              "species": "tiger",
+              "years": 5
+            }
+          },
+          "possible_answer_item": {
+            "animal_population.get_history": {
+              "country": [
+                "India"
+              ],
+              "species": [
+                "tigers",
+                "tiger"
+              ],
+              "years": [
+                5
+              ]
+            }
+          }
+        }
+      },
+      {
+        "Model Result Index 2": {
+          "sub_error": [
+            "Function name 'animal_population_get_history' not found in model output."
+          ],
+          "sub_error_type": "simple_function_checker:wrong_func_name",
+          "model_output_item": {
+            "animal_population_get_projection": {
+              "country": "Nepal",
+              "species": "tiger",
+              "years": 10
+            }
+          },
+          "possible_answer_item": {
+            "animal_population.get_history": {
+              "country": [
+                "India"
+              ],
+              "species": [
+                "tigers",
+                "tiger"
+              ],
+              "years": [
+                5
+              ]
+            }
+          }
+        }
+      },
+      {
+        "Model Result Index 3": {
+          "sub_error": [
+            "Function name 'animal_population_get_history' not found in model output."
+          ],
+          "sub_error_type": "simple_function_checker:wrong_func_name",
+          "model_output_item": {
+            "animal_population_get_projection": {
+              "country": "Malaysia",
+              "species": "tiger",
+              "years": 10
+            }
+          },
+          "possible_answer_item": {
+            "animal_population.get_history": {
+              "country": [
+                "India"
+              ],
+              "species": [
+                "tigers",
+                "tiger"
+              ],
+              "years": [
+                5
+              ]
+            }
+          }
+        }
+      }
     ]
   },
   {
@@ -2758,6 +2940,20 @@
           "cuisine": "Chinese",
           "location": "New York, NY",
           "rating": 4.0
+        }
+      },
+      {
+        "restaurant_search": {
+          "cuisine": "Italian",
+          "location": "Los Angeles, CA",
+          "rating": 4.0
+        }
+      },
+      {
+        "flight_search": {
+          "_from": "New York",
+          "to": "Los Angeles",
+          "type": "round-trip"
         }
       }
     ],
@@ -2807,41 +3003,94 @@
       }
     ],
     "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_multiple_16",
-    "category": "parallel_multiple",
-    "question": "Calculate the factorial of 8 and generate the prime numbers from 1 to 50.",
-    "model_output": [
+      "Could not find a matching function among index [0, 1, 2] of model output for index 0 of possible answers.",
       {
-        "calculate_factorial": {
-          "number": 8
-        }
-      }
-    ],
-    "expected": [
-      {
-        "calculate_factorial": {
-          "number": [
-            8
-          ]
+        "Model Result Index 0": {
+          "sub_error": [
+            "Invalid value for parameter 'rating': 4.0. Expected one of [1.0, '']."
+          ],
+          "sub_error_type": "value_error:others",
+          "model_output_item": {
+            "restaurant_search": {
+              "cuisine": "Chinese",
+              "location": "New York, NY",
+              "rating": 4.0
+            }
+          },
+          "possible_answer_item": {
+            "restaurant.search": {
+              "location": [
+                "New York, NY"
+              ],
+              "cuisine": [
+                "Chinese"
+              ],
+              "rating": [
+                1.0,
+                ""
+              ]
+            }
+          }
         }
       },
       {
-        "generate_prime": {
-          "start": [
-            1
+        "Model Result Index 1": {
+          "sub_error": [
+            "Invalid value for parameter 'cuisine': 'Italian'. Expected one of ['Chinese']. Case insensitive."
           ],
-          "end": [
-            50
-          ]
+          "sub_error_type": "value_error:string",
+          "model_output_item": {
+            "restaurant_search": {
+              "cuisine": "Italian",
+              "location": "Los Angeles, CA",
+              "rating": 4.0
+            }
+          },
+          "possible_answer_item": {
+            "restaurant.search": {
+              "location": [
+                "New York, NY"
+              ],
+              "cuisine": [
+                "Chinese"
+              ],
+              "rating": [
+                1.0,
+                ""
+              ]
+            }
+          }
+        }
+      },
+      {
+        "Model Result Index 2": {
+          "sub_error": [
+            "Function name 'restaurant_search' not found in model output."
+          ],
+          "sub_error_type": "simple_function_checker:wrong_func_name",
+          "model_output_item": {
+            "flight_search": {
+              "_from": "New York",
+              "to": "Los Angeles",
+              "type": "round-trip"
+            }
+          },
+          "possible_answer_item": {
+            "restaurant.search": {
+              "location": [
+                "New York, NY"
+              ],
+              "cuisine": [
+                "Chinese"
+              ],
+              "rating": [
+                1.0,
+                ""
+              ]
+            }
+          }
         }
       }
-    ],
-    "error": [
-      "Wrong number of functions."
     ]
   },
   {
@@ -2851,9 +3100,9 @@
     "model_output": [
       {
         "math_gaussian_integral": {
-          "function": "math_definite_integral",
-          "lower_limit": 0.0,
-          "upper_limit": 3.1416
+          "function": "exp(-x**2)",
+          "lower_limit": -2,
+          "upper_limit": 2.0
         }
       }
     ],
@@ -2892,72 +3141,48 @@
     ]
   },
   {
-    "id": "parallel_multiple_20",
-    "category": "parallel_multiple",
-    "question": "Determine the median and variance for the following data points 3,4,5,2,8,5. Also determine the mode for these points.",
-    "model_output": [],
-    "expected": [
-      {
-        "statistics.median": {
-          "data": [
-            [
-              3,
-              4,
-              5,
-              2,
-              8,
-              5
-            ]
-          ]
-        }
-      },
-      {
-        "statistics.variance": {
-          "data": [
-            [
-              3,
-              4,
-              5,
-              2,
-              8,
-              5
-            ]
-          ],
-          "population": [
-            true,
-            false,
-            ""
-          ]
-        }
-      },
-      {
-        "statistics.mode": {
-          "data": [
-            [
-              3,
-              4,
-              5,
-              2,
-              8,
-              5
-            ]
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_multiple_21",
     "category": "parallel_multiple",
     "question": "Use the data from dataset.csv file and fit a linear regression model to predict future sales by setting x=data['sales'] and y=data['future_sales']. Additionally, calculate and return the residuals.",
     "model_output": [
       {
         "data_loading": {
-          "file_path": "dataset.csv",
-          "delimiter": ","
+          "delimiter": ",",
+          "file_path": "dataset.csv"
+        }
+      },
+      {
+        "linear_regression_fit": {
+          "x": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "y": [
+            110,
+            130,
+            150,
+            170,
+            190,
+            210,
+            230,
+            250,
+            270,
+            290
+          ]
+        }
+      },
+      {
+        "data_loading": {
+          "delimiter": ",",
+          "file_path": "dataset.csv"
         }
       }
     ],
@@ -2992,37 +3217,6 @@
     ]
   },
   {
-    "id": "parallel_multiple_23",
-    "category": "parallel_multiple",
-    "question": "Calculate the net profit margin of Company XYZ given that the net income is $20,000 and total revenue is $100,000. Also calculate the debt ratio of the same company if the total liabilities are $10,000 and total assets are $30,000.",
-    "model_output": [],
-    "expected": [
-      {
-        "financial_ratio.net_profit_margin": {
-          "net_income": [
-            20000
-          ],
-          "total_revenue": [
-            100000
-          ]
-        }
-      },
-      {
-        "financial_ratio.debt_ratio": {
-          "total_liabilities": [
-            10000
-          ],
-          "total_assets": [
-            30000
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
     "id": "parallel_multiple_24",
     "category": "parallel_multiple",
     "question": "Invest $2000 in Google and withdraw $1000 from Apple.",
@@ -3030,13 +3224,19 @@
       {
         "investment_invest": {
           "amount": 2000,
-          "company": "Alphabet Inc."
+          "company": "Google "
         }
       },
       {
         "investment_withdraw": {
           "amount": 1000,
-          "company": "Apple Inc."
+          "company": "Apple "
+        }
+      },
+      {
+        "investment_withdraw": {
+          "amount": 1000,
+          "company": "Apple "
         }
       }
     ],
@@ -3065,57 +3265,7 @@
       }
     ],
     "error": [
-      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
-      {
-        "Model Result Index 0": {
-          "sub_error": [
-            "Invalid value for parameter 'company': 'Alphabet Inc.'. Expected one of ['Google', 'GOOG']. Case insensitive."
-          ],
-          "sub_error_type": "value_error:string",
-          "model_output_item": {
-            "investment_invest": {
-              "amount": 2000,
-              "company": "Alphabet Inc."
-            }
-          },
-          "possible_answer_item": {
-            "investment.invest": {
-              "company": [
-                "Google",
-                "GOOG"
-              ],
-              "amount": [
-                2000.0
-              ]
-            }
-          }
-        }
-      },
-      {
-        "Model Result Index 1": {
-          "sub_error": [
-            "Function name 'investment_invest' not found in model output."
-          ],
-          "sub_error_type": "simple_function_checker:wrong_func_name",
-          "model_output_item": {
-            "investment_withdraw": {
-              "amount": 1000,
-              "company": "Apple Inc."
-            }
-          },
-          "possible_answer_item": {
-            "investment.invest": {
-              "company": [
-                "Google",
-                "GOOG"
-              ],
-              "amount": [
-                2000.0
-              ]
-            }
-          }
-        }
-      }
+      "Wrong number of functions."
     ]
   },
   {
@@ -3149,53 +3299,6 @@
           ],
           "dividend_per_share": [
             1.3
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_multiple_26",
-    "category": "parallel_multiple",
-    "question": "Get me the transaction history for my account '00125648' for the past 7 days and also calculate the total balance.",
-    "model_output": [
-      {
-        "bank_get_transaction_history": {
-          "account": "00125648",
-          "days": 7
-        }
-      }
-    ],
-    "expected": [
-      {
-        "bank.get_transaction_history": {
-          "account": [
-            "00125648"
-          ],
-          "days": [
-            7
-          ]
-        }
-      },
-      {
-        "bank.calculate_balance": {
-          "account": [
-            "00125648"
-          ],
-          "transactions": [
-            [],
-            ""
-          ],
-          "type": [
-            "credit",
-            ""
-          ],
-          "starting_balance": [
-            "",
-            0.0
           ]
         }
       }
@@ -3349,9 +3452,44 @@
     "question": "Find all law cases where Charles Dickens is a party and it happened in Boston. Also, get cases where University of California was a party and happened in Los Angeles.",
     "model_output": [
       {
+        "legal_case_find_parties": {
+          "city": "Boston",
+          "party_name": "Charles Dickens"
+        }
+      },
+      {
+        "legal_case_find_parties": {
+          "city": "Los Angeles",
+          "party_name": "University of California"
+        }
+      },
+      {
         "legal_case_get_summary": {
-          "case_id": "Charles_Dickens_Boston",
+          "case_id": "CASE-78901"
+        }
+      },
+      {
+        "legal_case_get_summary": {
+          "case_id": "CASE-78901",
+          "summary_type": "full"
+        }
+      },
+      {
+        "legal_case_get_summary": {
+          "case_id": "CASE-78901",
           "summary_type": "brief"
+        }
+      },
+      {
+        "legal_case_get_summary": {
+          "case_id": "CASE-78901",
+          "summary_type": "brief"
+        }
+      },
+      {
+        "legal_case_get_summary": {
+          "case_id": "CASE-78901",
+          "summary_type": "full"
         }
       }
     ],
@@ -3391,15 +3529,8 @@
     "question": "Find how many cases and the judge handling a specific lawsuit for Pacific Gas and Electric and Tesla Inc.",
     "model_output": [
       {
-        "lawsuit_judge": {
-          "company_name": "Pacific Gas and Electric",
-          "lawsuit_id": 12345
-        }
-      },
-      {
-        "lawsuit_judge": {
-          "company_name": "Tesla Inc.",
-          "lawsuit_id": 67890
+        "lawsuit_fetch_details": {
+          "company_name": "Pacific Gas and Electric"
         }
       }
     ],
@@ -3450,173 +3581,111 @@
     ]
   },
   {
-    "id": "parallel_multiple_33",
+    "id": "parallel_multiple_32",
     "category": "parallel_multiple",
-    "question": "Locate all supermarkets in Los Angeles and find the most popular site seeing place in Miami.",
+    "question": "Get temperature and humidity forecast for Boston, USA and precipitation forecast for Rome, Italy for next 10 days.",
     "model_output": [
       {
-        "supermarket_find_in_city": {
-          "city": "Los Angeles",
-          "openNow": true
+        "weather_forecast_temperature": {
+          "days": 10,
+          "location": "Boston, USA"
         }
       },
       {
-        "sightseeing_popular_in_city": {
-          "city": "Miami",
-          "kidsFriendly": true
+        "weather_forecast_humidity": {
+          "days": 10,
+          "location": "Rome, Italy"
+        }
+      },
+      {
+        "weather_forecast_precipitation": {
+          "days": 10,
+          "location": "Rome, Italy"
         }
       }
     ],
     "expected": [
       {
-        "supermarket.find_in_city": {
-          "city": [
-            "Los Angeles",
-            "LA"
+        "weather_forecast_temperature": {
+          "location": [
+            "Boston, USA"
           ],
-          "state": [
-            "California",
-            "CA"
-          ],
-          "openNow": [
-            "",
-            true
+          "days": [
+            10
           ]
         }
       },
       {
-        "sightseeing.popular_in_city": {
-          "city": [
-            "Miami"
+        "weather_forecast_humidity": {
+          "location": [
+            "Boston, USA"
           ],
-          "state": [
-            "Florida",
-            "FL"
+          "days": [
+            10
+          ]
+        }
+      },
+      {
+        "weather_forecast_precipitation": {
+          "location": [
+            "Rome, Italy"
           ],
-          "kidsFriendly": [
-            "",
-            true
+          "days": [
+            10
           ]
         }
       }
     ],
     "error": [
-      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
-      {
-        "Model Result Index 0": {
-          "sub_error": [
-            "Missing required parameter: 'state'."
-          ],
-          "sub_error_type": "simple_function_checker:missing_required",
-          "model_output_item": {
-            "supermarket_find_in_city": {
-              "city": "Los Angeles",
-              "openNow": true
-            }
-          },
-          "possible_answer_item": {
-            "supermarket.find_in_city": {
-              "city": [
-                "Los Angeles",
-                "LA"
-              ],
-              "state": [
-                "California",
-                "CA"
-              ],
-              "openNow": [
-                "",
-                true
-              ]
-            }
-          }
-        }
-      },
+      "Could not find a matching function among index [1, 2] of model output for index 1 of possible answers.",
       {
         "Model Result Index 1": {
           "sub_error": [
-            "Function name 'supermarket_find_in_city' not found in model output."
+            "Invalid value for parameter 'location': 'Rome, Italy'. Expected one of ['Boston, USA']. Case insensitive."
           ],
-          "sub_error_type": "simple_function_checker:wrong_func_name",
+          "sub_error_type": "value_error:string",
           "model_output_item": {
-            "sightseeing_popular_in_city": {
-              "city": "Miami",
-              "kidsFriendly": true
+            "weather_forecast_humidity": {
+              "days": 10,
+              "location": "Rome, Italy"
             }
           },
           "possible_answer_item": {
-            "supermarket.find_in_city": {
-              "city": [
-                "Los Angeles",
-                "LA"
+            "weather_forecast_humidity": {
+              "location": [
+                "Boston, USA"
               ],
-              "state": [
-                "California",
-                "CA"
+              "days": [
+                10
+              ]
+            }
+          }
+        }
+      },
+      {
+        "Model Result Index 2": {
+          "sub_error": [
+            "Function name 'weather_forecast_humidity' not found in model output."
+          ],
+          "sub_error_type": "simple_function_checker:wrong_func_name",
+          "model_output_item": {
+            "weather_forecast_precipitation": {
+              "days": 10,
+              "location": "Rome, Italy"
+            }
+          },
+          "possible_answer_item": {
+            "weather_forecast_humidity": {
+              "location": [
+                "Boston, USA"
               ],
-              "openNow": [
-                "",
-                true
+              "days": [
+                10
               ]
             }
           }
         }
       }
-    ]
-  },
-  {
-    "id": "parallel_multiple_34",
-    "category": "parallel_multiple",
-    "question": "Translate the phrase 'Hello World' from English to Spanish and translate 'Goodbye' from French to English. In addition to that get current time in 'Los Angeles' and 'London'.",
-    "model_output": [],
-    "expected": [
-      {
-        "translate_text": {
-          "text": [
-            "Hello World"
-          ],
-          "from_lang": [
-            "English",
-            "EN"
-          ],
-          "to_lang": [
-            "Spanish",
-            "ES"
-          ]
-        }
-      },
-      {
-        "translate_text": {
-          "text": [
-            "Goodbye"
-          ],
-          "from_lang": [
-            "French",
-            "FR"
-          ],
-          "to_lang": [
-            "English",
-            "EN"
-          ]
-        }
-      },
-      {
-        "get_current_time": {
-          "location": [
-            "Los Angeles"
-          ]
-        }
-      },
-      {
-        "get_current_time": {
-          "location": [
-            "London"
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
     ]
   },
   {
@@ -3631,7 +3700,7 @@
       },
       {
         "text_analysis_sentiment_analysis": {
-          "text": "Today’s journal entry reflects a calm and hopeful outlook, with gratitude for quiet moments and a quiet sense of peace. The day felt gentle and full of appreciation."
+          "text": "Today was a wonderful day. The sun was warm, the birds sang, and I felt truly at peace. I’m grateful for this moment and the simple joys it brings."
         }
       }
     ],
@@ -3656,12 +3725,12 @@
       {
         "Model Result Index 1": {
           "sub_error": [
-            "Invalid value for parameter 'text': 'Today’s journal entry reflects a calm and hopeful outlook, with gratitude for quiet moments and a quiet sense of peace. The day felt gentle and full of appreciation.'. Expected one of ['my_journal_entry_text']. Case insensitive."
+            "Invalid value for parameter 'text': 'Today was a wonderful day. The sun was warm, the birds sang, and I felt truly at peace. I’m grateful for this moment and the simple joys it brings.'. Expected one of ['my_journal_entry_text']. Case insensitive."
           ],
           "sub_error_type": "value_error:string",
           "model_output_item": {
             "text_analysis_sentiment_analysis": {
-              "text": "Today’s journal entry reflects a calm and hopeful outlook, with gratitude for quiet moments and a quiet sense of peace. The day felt gentle and full of appreciation."
+              "text": "Today was a wonderful day. The sun was warm, the birds sang, and I felt truly at peace. I’m grateful for this moment and the simple joys it brings."
             }
           },
           "possible_answer_item": {
@@ -3682,10 +3751,19 @@
     "model_output": [
       {
         "euro_history_battle_details": {
-          "battle_name": "Battle of Waterloo",
+          "battle_name": "Treaty of Tordesillas",
           "specific_info": [
             "overview"
           ]
+        }
+      },
+      {
+        "euro_history_treaty_info": {
+          "info_requested": [
+            "signatories",
+            "ratification date"
+          ],
+          "treaty_name": "Treaty of Tordesillas"
         }
       }
     ],
@@ -3718,119 +3796,125 @@
       }
     ],
     "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_multiple_37",
-    "category": "parallel_multiple",
-    "question": "Get me the timeline of World War 2 in Europe and then get me an array of important leaders involved during the war.",
-    "model_output": [
+      "Could not find a matching function among index [0, 1] of model output for index 0 of possible answers.",
       {
-        "history_get_timeline": {
-          "event": "World War 2",
-          "region": "Europe"
-        }
-      }
-    ],
-    "expected": [
-      {
-        "history.get_timeline": {
-          "event": [
-            "World War 2",
-            "WW2",
-            "World War 2 in Europe"
+        "Model Result Index 0": {
+          "sub_error": [
+            "Invalid value for parameter 'battle_name': 'Treaty of Tordesillas'. Expected one of ['Battle of Waterloo', 'Waterloo']. Case insensitive."
           ],
-          "region": [
-            "Europe",
-            ""
-          ]
+          "sub_error_type": "value_error:string",
+          "model_output_item": {
+            "euro_history_battle_details": {
+              "battle_name": "Treaty of Tordesillas",
+              "specific_info": [
+                "overview"
+              ]
+            }
+          },
+          "possible_answer_item": {
+            "euro_history.battle_details": {
+              "battle_name": [
+                "Battle of Waterloo",
+                "Waterloo"
+              ],
+              "specific_info": [
+                [
+                  "overview"
+                ]
+              ]
+            }
+          }
         }
       },
       {
-        "history.get_important_figures": {
-          "event": [
-            "World War 2",
-            "WW2",
-            "World War 2 in Europe"
+        "Model Result Index 1": {
+          "sub_error": [
+            "Function name 'euro_history_battle_details' not found in model output."
           ],
-          "number": [
-            1,
-            ""
-          ]
+          "sub_error_type": "simple_function_checker:wrong_func_name",
+          "model_output_item": {
+            "euro_history_treaty_info": {
+              "info_requested": [
+                "signatories",
+                "ratification date"
+              ],
+              "treaty_name": "Treaty of Tordesillas"
+            }
+          },
+          "possible_answer_item": {
+            "euro_history.battle_details": {
+              "battle_name": [
+                "Battle of Waterloo",
+                "Waterloo"
+              ],
+              "specific_info": [
+                [
+                  "overview"
+                ]
+              ]
+            }
+          }
         }
       }
-    ],
-    "error": [
-      "Wrong number of functions."
     ]
   },
   {
     "id": "parallel_multiple_38",
     "category": "parallel_multiple",
     "question": "What was the average life expectancy in the USA in the year 1900 and 1950? Additionally, what was the Gross Domestic Product (GDP) of the USA in these years?",
-    "model_output": [],
-    "expected": [
-      {
-        "us_history.life_expectancy": {
-          "year": [
-            1900
-          ]
-        }
-      },
-      {
-        "us_history.life_expectancy": {
-          "year": [
-            1950
-          ]
-        }
-      },
-      {
-        "us_history.gdp": {
-          "year": [
-            1900
-          ]
-        }
-      },
-      {
-        "us_history.gdp": {
-          "year": [
-            1950
-          ]
-        }
-      }
-    ],
-    "error": [
-      "Wrong number of functions."
-    ]
-  },
-  {
-    "id": "parallel_multiple_39",
-    "category": "parallel_multiple",
-    "question": "What is the exact birthdate of Nikola Tesla and what his most famous discovery was?",
     "model_output": [
       {
-        "scientist_info_get_birthdate": {
-          "name": "Nikola Tesla"
+        "us_history_life_expectancy": {
+          "year": 1900
+        }
+      },
+      {
+        "us_history_life_expectancy": {
+          "year": 1900
+        }
+      },
+      {
+        "us_history_gdp": {
+          "year": 1900
+        }
+      },
+      {
+        "us_history_gdp": {
+          "year": 1950
+        }
+      },
+      {
+        "us_history_gdp": {
+          "year": 1950
         }
       }
     ],
     "expected": [
       {
-        "scientist_info.get_birthdate": {
-          "name": [
-            "Nikola Tesla"
+        "us_history.life_expectancy": {
+          "year": [
+            1900
           ]
         }
       },
       {
-        "scientist_info.get_famous_discovery": {
-          "name": [
-            "Nikola Tesla"
-          ],
-          "discovery_order": [
-            1,
-            ""
+        "us_history.life_expectancy": {
+          "year": [
+            1950
+          ]
+        }
+      },
+      {
+        "us_history.gdp": {
+          "year": [
+            1900
+          ]
+        }
+      },
+      {
+        "us_history.gdp": {
+          "year": [
+            1950
           ]
         }
       }
@@ -3846,53 +3930,8 @@
     "model_output": [
       {
         "determine_body_mass_index": {
-          "height": 10,
-          "weight": 10
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_1",
-    "category": "irrelevance",
-    "question": "Solve the quadratic equation with coefficients a = 1, b = 2, and c = 3.",
-    "model_output": [
-      {
-        "math_sum": {
-          "numbers": [
-            1,
-            2,
-            3
-          ]
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_2",
-    "category": "irrelevance",
-    "question": "Solve for the roots of the equation 3x^2 - 2x - 5.",
-    "model_output": [
-      {
-        "distance_calculator_calculate": {
-          "coordinate_1": [
-            -2,
-            3,
-            0.6667
-          ],
-          "coordinate_2": [
-            0,
-            0,
-            0
-          ]
+          "height": 5.0,
+          "weight": 0.0
         }
       }
     ],
@@ -3910,80 +3949,7 @@
         "find_roots": {
           "a": 0,
           "b": 1,
-          "c": 0
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_5",
-    "category": "irrelevance",
-    "question": "What is the perimeter of a rectangle with length 5 meters and width 4 meters?",
-    "model_output": [
-      {
-        "solve_quadratic_equation": {
-          "a": 5,
-          "b": 4,
-          "c": 0
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_6",
-    "category": "irrelevance",
-    "question": "What's the area of a rectangle that has width of 5m and length of 7m?",
-    "model_output": [
-      {
-        "draw_circle": {
-          "radius": 17.5,
-          "unit": "m"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_7",
-    "category": "irrelevance",
-    "question": "What is the area under the curve of the function f(x) = 3x^2 from x = 1 to x = 5?",
-    "model_output": [
-      {
-        "draw_circle": {
-          "radius": 2,
-          "unit": "units"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_10",
-    "category": "irrelevance",
-    "question": "Compute the derivative of the function '2x' within the at 1.",
-    "model_output": [
-      {
-        "calculus_compute_definite_integral": {
-          "function": "2*x",
-          "interval": [
-            0,
-            1
-          ],
-          "num_of_partitions": 1000
+          "c": 1
         }
       }
     ],
@@ -4010,24 +3976,6 @@
     ]
   },
   {
-    "id": "irrelevance_12",
-    "category": "irrelevance",
-    "question": "Find the fastest route from New York to Boston.",
-    "model_output": [
-      {
-        "prime_numbers_in_range": {
-          "end": 1000,
-          "return_format": "string",
-          "start": 1
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
     "id": "irrelevance_14",
     "category": "irrelevance",
     "question": "What is the acceleration a ball will reach if it's thrown straight upwards with a velocity of 5 m/s?",
@@ -4036,24 +3984,6 @@
         "calculate_maximum_height": {
           "gravity": 9.8,
           "initial_velocity": 5
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_15",
-    "category": "irrelevance",
-    "question": "What are the latest movie releases?",
-    "model_output": [
-      {
-        "calculate_velocity": {
-          "acceleration": 0,
-          "initial_velocity": 0,
-          "time": 10
         }
       }
     ],
@@ -4081,60 +4011,6 @@
     ]
   },
   {
-    "id": "irrelevance_17",
-    "category": "irrelevance",
-    "question": "What's the time right now?",
-    "model_output": [
-      {
-        "calculate_time": {
-          "distance": 500,
-          "round_to_nearest_second": true,
-          "speed": 75
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_18",
-    "category": "irrelevance",
-    "question": "How do I find the angle of the force for a given momentum?",
-    "model_output": [
-      {
-        "calculate_vector_angle": {
-          "X_component": 150,
-          "Y_component": 200,
-          "use_degrees": true
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_20",
-    "category": "irrelevance",
-    "question": "Find the duration of flight between Los Angeles and Miami.",
-    "model_output": [
-      {
-        "currency_converter": {
-          "amount": 4500,
-          "base_currency": "USD",
-          "target_currency": "AUD"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
     "id": "irrelevance_22",
     "category": "irrelevance",
     "question": "What is the magnetic field at a point located at distance 'r' from a wire carrying current 'I'?",
@@ -4143,42 +4019,6 @@
         "magnetic_field_intensity": {
           "current": 5.0,
           "distance": 0.2
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_23",
-    "category": "irrelevance",
-    "question": "What's the mass of an electron?",
-    "model_output": [
-      {
-        "calculate_magnetic_field": {
-          "current": 0,
-          "distance": 1,
-          "permeability": 4.0
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_24",
-    "category": "irrelevance",
-    "question": "What's the mass of an electron?",
-    "model_output": [
-      {
-        "calculate_current": {
-          "frequency": 1,
-          "resistance": 1,
-          "voltage": 1
         }
       }
     ],
@@ -4214,8 +4054,8 @@
         "thermodynamics_calc_gas_pressure": {
           "initial_temperature": 25,
           "final_temperature": 100,
-          "initial_pressure": 101325,
-          "volume": 2
+          "volume": 2,
+          "initial_pressure": 101325
         }
       }
     ],
@@ -4246,89 +4086,9 @@
     "id": "irrelevance_28",
     "category": "irrelevance",
     "question": "How many sides does a hexagon have?",
-    "model_output": [
-      {
-        "calculate_boiling_point": {
-          "pressure": 1.0,
-          "substance": "hexagon"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_29",
-    "category": "irrelevance",
-    "question": "Identify the number of the mitochondria in a cell.",
-    "model_output": [
-      {
-        "get_cell_function": {
-          "cell_part": "mitochondria",
-          "detail_level": "basic"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_30",
-    "category": "irrelevance",
-    "question": "What's the name of a type of cell that has multiple nuclei?",
-    "model_output": [
-      {
-        "bloodcell_classification": {
-          "cell_function": "multinucleate",
-          "cell_shape": "irregular",
-          "cell_size": "variable"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_31",
-    "category": "irrelevance",
-    "question": "Find the favorite restaurant in London.",
-    "model_output": [
-      {
-        "cell_divide": {
-          "cell_id": "favorite_london_restaurant",
-          "method": "analyze",
-          "times": 1
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_32",
-    "category": "irrelevance",
-    "question": "Identify the type of blood cells responsible for clotting.",
-    "model_output": [
-      {
-        "cellBiology_getCellType": {
-          "membrane_type": "membrane",
-          "nucleus_count": 0,
-          "organism_type": "blood"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
+    "model_output": "NO_TOOL",
+    "expected": [],
+    "error": "decode_failed: 'str' object has no attribute 'keys'"
   },
   {
     "id": "irrelevance_33",
@@ -4347,91 +4107,11 @@
     ]
   },
   {
-    "id": "irrelevance_34",
-    "category": "irrelevance",
-    "question": "What is the dominant genetic trait of a Lion?",
-    "model_output": [
-      {
-        "genetics_get_variant_frequency": {
-          "population": "African lion",
-          "variant_id": "LION_LION_ROAR_OR_AMBULATE"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_36",
-    "category": "irrelevance",
-    "question": "What is the frequency of gene variant rs7412 in the European population?",
-    "model_output": [
-      {
-        "get_dominant_trait": {
-          "allele1": "rs7412",
-          "allele2": "A",
-          "inheritance_pattern": "dominant"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
     "id": "irrelevance_37",
     "category": "irrelevance",
     "question": "Find a picnic spot in Miami.",
-    "model_output": [
-      {
-        "local_fauna": {
-          "location": "Miami",
-          "migration_season": "year-round",
-          "species_type": "urban wildlife"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_38",
-    "category": "irrelevance",
-    "question": "Find me a documentary about global warming.",
-    "model_output": [
-      {
-        "retrieve_scientific_paper": {
-          "topic": "global warming documentary",
-          "year": "> 2020"
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
-  },
-  {
-    "id": "irrelevance_39",
-    "category": "irrelevance",
-    "question": "How to increase the population of deer in a forest?",
-    "model_output": [
-      {
-        "calculate_population_growth": {
-          "birth_rate": 0.15,
-          "current_population": 150,
-          "death_rate": 0.05
-        }
-      }
-    ],
-    "expected": "(no tool call expected)",
-    "error": [
-      "model emitted a tool call on an irrelevant request"
-    ]
+    "model_output": "NO_TOOL",
+    "expected": [],
+    "error": "decode_failed: 'str' object has no attribute 'keys'"
   }
 ]

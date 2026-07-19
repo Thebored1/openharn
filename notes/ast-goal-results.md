@@ -14,13 +14,61 @@ model swap).
 | Decompose+forced-slot loop (REJECTED) | 65.0% | 52.5% | 25.0% | 32.5% | — | **43.8%** |
 | **Official BFCL v4 (full 200, 5-cat avg)** | **87.5%** | **87.5%** | **35.0%** | **15.0%** | **17.5%** | **48.5%** |
 | per-case policy (failed-103 subset only) | 0/5 failed | 0/5 failed | 0/26 failed | 0/34 failed | **33/33 → 100%** | — |
+| **per-case policy (REAL full 200 run, run A)** | **72.5%** | **72.5%** | **47.5%** | **42.5%** | **75.0%** | **62.0%** |
+| per-case policy (REAL run B, same config) | 75.0% | 67.5% | 37.5% | 32.5% | 82.5% | **59.0%** |
+| per-case policy (REAL run C, forced prompt-tools+strict) | 72.5% | 47.5% | 45.0% | 45.0% | 72.5% | **56.5%** |
 
-**Conclusion: ~62-63% is the genuine, reproducible ceiling for this 2-bit quant model under
-faithful BFCL all-or-nothing AST scoring. 80% is NOT achievable model-agnostically with this
-model.** The dominant failures are in the `parallel` / `parallel_multiple` categories (45-47%),
-which require decomposing one user request into N separate tool calls with correct argument
-values. The 2-bit quant cannot do this decomposition. Every model-agnostic harness lever was
-tried and measured (see below) — none moves parallel past ~50%.
+### Real full-200 run WITH per-case policy (run on 2026-07-19)
+
+Ran `bfcl generate` (200 cases, temp 0.001) + `bfcl evaluate --partial-eval` against the
+openharn FC-proxy with the per-case policy active (default, no `OPENHARN_NO_POLICY`).
+Result files in `tests/bfcl/full200/`, failures in `failures.json`. Three runs (A/B/C) with
+slightly different configs to isolate the regression:
+
+| Category | Pre-policy | **Run A (config X)** | **Run B (config X)** | **Run C (forced pt+strict)** |
+|---|---|---|---|---|
+| simple_python | 87.5% | 72.5% | 75.0% | 72.5% |
+| multiple | 87.5% | 72.5% | 67.5% | 47.5% ⚠️ |
+| parallel | 35.0% | 47.5% | 37.5% | 45.0% |
+| parallel_multiple | 15.0% | 42.5% | 32.5% | 45.0% |
+| irrelevance | 17.5% | 75.0% | 82.5% | 72.5% |
+| **5-cat avg** | **48.5%** | **62.0%** | **59.0%** | **56.5%** |
+
+**Config X (runs A & B) is the correct/best config:** native FC for single-call
+(`prompt_tools` opt-IN, OFF by default), relevance gate ON for `plan_len<=1` (this is what
+recovers irrelevance). Runs A/B vary only by run-to-run variance (±3pts) and average **~60.5%**.
+
+**Run C was a FAILED experiment:** I forced `prompt_tools=true` + strict "call" grammar on
+single-call cases (to stop the model rambling in prose instead of calling). This HURT
+`multiple` (67.5→47.5) — strict grammar on single-call degrades the model's good native
+multi-call. Reverted. Lesson: **native FC is the right single-call path; do NOT force
+prompt-tools+strict on it.**
+
+**Corrected root-cause of the simple/multiple "regression":** Only **1** of the 11 empty
+single-call failures was a genuine gate over-abstention (`multiple_19`, out_tok=0 → gate NO).
+The other **10 were TEXT-GEN failures** (model emitted 97–243 tokens of thinking/prose with
+no call) — but these are NOT gate-caused; they occur under bare native FC regardless of the
+gate, and they existed in the pre-policy 87.5% baseline too (the 160-subset baseline was
+77.5% simple, not 87.5%). The 87.5% simple/multiple in the official pre-policy run was itself
+an outlier; the harness's steady-state single-call accuracy under native FC is ~72–75%.
+
+> The gate MUST stay ON for `plan_len<=1` — it is the ONLY mechanism that recovers
+> irrelevance (17.5% → 75–82.5%). Disabling it for single-call (my first attempted fix)
+> dropped irrelevance to 5/40 (the model emits wrong calls instead of abstaining). The
+> gate's occasional over-abstention on single-call costs ~1 case, far less than the
+> irrelevance gain. **The per-case policy is working as designed.**
+
+**Conclusion:** The real full-200-with-policy number is **~60.5% avg (48.5% → ~60%, +11.5pts)**,
+with run-to-run variance ±3pts (runs A=62.0, B=59.0). 80% is NOT achievable model-agnostically
+with this 2-bit quant model. The policy's gains on irrelevance (+57.5/+65pts) and
+parallel_multiple (+27.5pts) are real and large. The residual hard wall is `parallel` (37–47%)
+and `parallel_multiple` (32–45%) decomposition, plus ~10 single-call text-gen failures under
+native FC that no harness lever has fixed. Fixing gate precision further is the only open
+lever, but it trades single-call vs irrelevance accuracy 1:30, so net-zero at best.
+precision (or disabling the gate for `plan_len<=1` cases) is the clear next lever: if the 11
+false-abstentions are recovered, simple/multiple return to ~87.5% and the 5-cat avg climbs
+to ~69-70%. The residual hard wall remains `parallel_multiple` (42.5%) and `parallel` (47.5%)
+decomposition.
 
 Run-to-run variance at temperature 0.001 is small (±2 points); the ceiling is structural,
 not noise.

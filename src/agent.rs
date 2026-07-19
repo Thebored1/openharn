@@ -1322,6 +1322,9 @@ struct CasePolicy {
 /// is whether the request even carries tool schemas.
 fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
     // Env master-switches still act as global overrides / kill-switches.
+    // PROMPT_TOOLS / STRICT_TOOLS are opt-IN (native FC is the default single-call
+    // path; it is the model's best mode for one-shot calls). The gate is ON by
+    // default in policy mode (see policy_gate below) to recover irrelevance.
     let env_strict = std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
     let env_prompt = std::env::var_os("OPENHARN_PROMPT_TOOLS").is_some();
     let env_abstain = std::env::var_os("OPENHARN_STRICT_ABSTAIN").is_some();
@@ -1329,19 +1332,12 @@ fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
     let env_no_policy = std::env::var_os("OPENHARN_NO_POLICY").is_some();
     let env_iterate = std::env::var_os("OPENHARN_FC_ITERATE").is_some();
 
-    // In policy mode the relevance gate is ON by default ONLY when the harness
-    // decomposer finds zero matching clauses (plan_len == 0), which means the
-    // request is structurally irrelevant — no tool keywords matched. For requests
-    // with one or more planned clauses the gate is off by default (it would falsely
-    // reject relevant requests and crash simple/multiple accuracy). OPENHARN_FC_GATE
-    // still forces the gate on for all cases regardless.
-    let policy_gate = if plan_len == 0 {
-        env_gate || !env_no_policy
-    } else {
-        env_gate
-    };
-    // Abstain grammar is paired with the gate — only active when gate says NO_TOOL.
-    let policy_abstain = env_abstain || policy_gate;
+    // In policy mode the relevance gate + abstain mode are ON by default: the
+    // harness makes the call-vs-abstain decision (the model cannot), and only
+    // emits a tool when the gate says one applies. This is what recovers the
+    // `irrelevance` category. Env switches can still force-disable them.
+    let policy_gate = env_gate || !env_no_policy;
+    let policy_abstain = env_abstain || !env_no_policy;
 
     // Fall back to the historic global config when policy is disabled.
     if env_no_policy {
@@ -1358,7 +1354,7 @@ fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
     if !has_tools {
         // No tools at all: nothing to call; abstain path is moot, just answer.
         return CasePolicy {
-            category: "irrelevant", gate: policy_gate, abstain: false,
+            category: "irrelevant", gate: false, abstain: false,
             prompt_tools: env_prompt, strict: env_strict || env_prompt,
             crutch_k: None, max_tokens: cfg.max_tokens,
             native_template: false, plan_first: false,
@@ -1366,9 +1362,13 @@ fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
     }
 
     if plan_len <= 1 {
-        // Single operation: native FC is the model's best mode. The gate stays
-        // engaged for irrelevance detection, but we do NOT inject a count hint
-        // (it degrades the model's good single-call output).
+        // Single operation OR irrelevance — both carry tools and both can have
+        // plan_len>=1 (the keyword matcher false-matches irrelevant requests to an
+        // unrelated tool). Only the relevance gate (an LLM YES/NO) can tell them
+        // apart, so it stays engaged here. The gate recovers irrelevance (the model
+        // cannot abstain on its own); for genuine single-call it passes (relevant)
+        // and the strict call grammar below forces the call. We do NOT inject a
+        // count hint (it degrades the model's good single-call output).
         CasePolicy {
             category: "single",
             gate: policy_gate,
@@ -1443,7 +1443,8 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
 
     // Strategy 2: gate + abstain (for irrelevance). Separate the call-vs-abstain
     // decision from the generation itself — the harness decides whether any tool
-    // applies, not the model.
+    // applies, not the model. For single/multi-call the gate passes (relevant) and
+    // generation proceeds with the native FC / prompt-tools path below.
     let mut grammar_root = if policy.abstain { "abstain" } else { "text" };
     if policy.gate {
         let (relevant, gpt, gct) = relevance_gate(&client, &url, cfg, messages, tools);
@@ -1501,13 +1502,14 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let expected_k = policy.crutch_k;
     let policy_max_tokens = policy.max_tokens;
     let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
-    // Path A: native tool-calling (strong for single calls). Runs for ALL cases;
-    // the candidate selector picks the best output regardless of which path won.
-    if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
-        if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
+    // Path A: native tool-calling (strong for single calls; skipped when the policy
+    // wants prompt-tools, since prompt-tools is the more reliable multi-call path).
+    if !prompt_tools {
+        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
+            if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
+        }
     }
-    // Path B: prompt-tools + strict grammar (rescue for models whose native FC
-    // degrades; multi-call cases benefit from the grammar-constrained array).
+    // Path B: prompt-tools + strict grammar (parallel/multi-call cases, per policy).
     if prompt_tools {
         let wire = flatten_for_prompt_tools(&msgs, tools, expected_k);
         let mut pt_body = json!({
