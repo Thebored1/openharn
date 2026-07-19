@@ -16,6 +16,16 @@ const DEFAULT_READ_LIMIT: usize = 2000;
 const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", "target", ".cargo", "dist", "build", ".venv", "__pycache__",
 ];
+/// EXTRA directories skipped only during a whole-system walk (glob_system / grep_system).
+/// These OS / app-internal trees dominate a full walk — `C:\Windows\WinSxS` alone is hundreds
+/// of thousands of directories — and virtually never hold the user file someone is looking
+/// for. Skipping them is what lets a system search actually REACH user directories within the
+/// time budget. A file genuinely inside one of these is still findable via `glob` with an
+/// absolute `path`.
+const SKIP_DIRS_SYSTEM: &[&str] = &[
+    "Windows", "Windows.old", "$Recycle.Bin", "$WinREAgent", "$SysReset",
+    "System Volume Information", "PerfLogs", "Recovery", "MSOCache", "AppData",
+];
 /// Wall-clock budget for a whole-system walk (glob_system / grep_system). A weak model
 /// routinely emits a pattern that matches nothing, and without a bound the walk traverses
 /// every drive to completion (minutes on Windows). Cut it off and say so.
@@ -36,6 +46,14 @@ fn unquote(s: &str) -> &str {
 fn skippable(entry: &walkdir::DirEntry) -> bool {
     entry.file_type().is_dir()
         && SKIP_DIRS.contains(&entry.file_name().to_string_lossy().as_ref())
+}
+
+/// Stricter skip for whole-system walks: everything `skippable` skips, plus the heavy OS /
+/// app-internal trees in `SKIP_DIRS_SYSTEM`.
+fn skippable_system(entry: &walkdir::DirEntry) -> bool {
+    skippable(entry)
+        || (entry.file_type().is_dir()
+            && SKIP_DIRS_SYSTEM.contains(&entry.file_name().to_string_lossy().as_ref()))
 }
 
 /// The actual filesystem roots to search: every existing drive on Windows, `/` on
@@ -100,10 +118,11 @@ fn do_glob_search(
     let mut last_tick = start;
     let mut dirs = 0u64;
     let mut timed_out = false;
+    let system = label.is_some();
     'outer: for root in roots {
         for entry in WalkDir::new(root)
             .into_iter()
-            .filter_entry(|e| !skippable(e))
+            .filter_entry(|e| if system { !skippable_system(e) } else { !skippable(e) })
             .filter_map(|e| e.ok())
         {
             if let Some(lbl) = label {
@@ -152,10 +171,11 @@ fn do_grep_search(
     let mut last_tick = start;
     let mut dirs = 0u64;
     let mut timed_out = false;
+    let system = label.is_some();
     'outer: for root in roots {
       for entry in WalkDir::new(root)
         .into_iter()
-        .filter_entry(|e| !skippable(e))
+        .filter_entry(|e| if system { !skippable_system(e) } else { !skippable(e) })
         .filter_map(|e| e.ok())
     {
         if let Some(lbl) = label {
@@ -731,7 +751,7 @@ pub fn schemas() -> Value {
         }},
         {"type":"function","function":{
             "name":"glob_system",
-            "description":"Search the ENTIRE computer (every drive) for files matching a glob pattern. SLOW and capped at a time limit. Use ONLY when you don't know which directory a file is in. If the user names a directory, use `glob` with that absolute `path` instead.",
+            "description":"Search every drive for files matching a glob pattern. Capped at a time limit, and SKIPS OS / app-internal trees (Windows, AppData, $Recycle.Bin, …) so it reaches user files fast — a file inside those is only findable via `glob` with an absolute `path`. Use ONLY when you don't know which directory a file is in; if the user names a directory, use `glob` with that absolute `path` instead.",
             "parameters":{"type":"object","properties":{
                 "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or *.txt. Do NOT wrap it in quotes."}
             },"required":["pattern"]}
@@ -875,6 +895,36 @@ mod tests {
         assert!(
             out.contains("index.html"),
             "quoted pattern + absolute path should still find the file, got: {out}"
+        );
+    }
+
+    #[test]
+    #[ignore] // diagnostic: print what glob patterns match a nested path
+    fn probe_glob_matching() {
+        for pat in ["**/index.html", "index.html", "*index.html", "**/*index.html"] {
+            let p = glob::Pattern::new(pat).unwrap();
+            for path in ["Files/Projects/sandbox/index.html", "index.html"] {
+                eprintln!("[probe] {pat:14} matches_path({path:36}) = {}", p.matches_path(Path::new(path)));
+            }
+            eprintln!("[probe] {pat:14} matches(basename 'index.html')          = {}", p.matches("index.html"));
+        }
+    }
+
+    #[test]
+    #[ignore] // walks the real filesystem; proves a user file is now REACHED (OS trees skipped)
+    fn glob_system_finds_a_reachable_user_file() {
+        let dir = std::env::current_dir().unwrap().join("openharn_sysfind_marker");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("zzq_openharn_marker.html"), "x").unwrap();
+        let mut s = Session::new(std::env::current_dir().unwrap());
+        let t0 = Instant::now();
+        let out = s.execute("glob_system", &json!({ "pattern": "**/zzq_openharn_marker.html" }));
+        let dt = t0.elapsed();
+        std::fs::remove_dir_all(&dir).ok();
+        eprintln!("[demo] glob_system in {:.1}s -> {out}", dt.as_secs_f64());
+        assert!(
+            out.contains("zzq_openharn_marker.html"),
+            "system search should reach + find the marker now that OS trees are skipped: {out}"
         );
     }
 
