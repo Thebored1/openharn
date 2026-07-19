@@ -7,13 +7,31 @@
 use crate::edit;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 const DEFAULT_READ_LIMIT: usize = 2000;
 const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", "target", ".cargo", "dist", "build", ".venv", "__pycache__",
 ];
+/// Wall-clock budget for a whole-system walk (glob_system / grep_system). A weak model
+/// routinely emits a pattern that matches nothing, and without a bound the walk traverses
+/// every drive to completion (minutes on Windows). Cut it off and say so.
+const SYSTEM_SEARCH_BUDGET: Duration = Duration::from_secs(15);
+
+/// Strip ONE pair of matching surrounding quotes from a pattern. Small models constantly
+/// wrap arguments in quotes (`'index.html'`, `"*.rs"`), which then match nothing. Quotes are
+/// never meaningful in a glob pattern, so removing a surrounding pair is always safe here.
+fn unquote(s: &str) -> &str {
+    let b = s.as_bytes();
+    if b.len() >= 2 && (b[0] == b'\'' || b[0] == b'"') && b[b.len() - 1] == b[0] {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
 
 fn skippable(entry: &walkdir::DirEntry) -> bool {
     entry.file_type().is_dir()
@@ -48,15 +66,56 @@ fn resolve(cwd: &Path, p: &str) -> PathBuf {
     cwd.join(trimmed)
 }
 
-/// Shared walk+glob logic used by both glob_tool and glob_system_tool.
-fn do_glob_search(roots: &[PathBuf], pat: &glob::Pattern, basename_ok: bool) -> (Vec<String>, bool) {
+/// Live in-place progress line for a whole-system walk (throttled to ~150ms). Shows how far
+/// into the time budget we are and how many directories have been scanned, so a long
+/// `glob_system`/`grep_system` doesn't look frozen.
+fn search_tick(start: Instant, last: &mut Instant, dirs: u64, label: &str) {
+    if last.elapsed().as_millis() >= 150 {
+        print!(
+            "\r\x1b[2m  {label}… {:.0}s / {:.0}s · {dirs} dirs\x1b[0m\x1b[K",
+            start.elapsed().as_secs_f64(),
+            SYSTEM_SEARCH_BUDGET.as_secs_f64()
+        );
+        let _ = std::io::stdout().flush();
+        *last = Instant::now();
+    }
+}
+/// Erase the live progress line before the result is printed.
+fn search_clear() {
+    print!("\r\x1b[K");
+    let _ = std::io::stdout().flush();
+}
+
+/// Shared walk+glob logic used by both glob_tool and glob_system_tool. `label` is `Some` only
+/// for the whole-system walk: it enables the time budget + live progress line. Returns
+/// `(matches, timed_out)`.
+fn do_glob_search(
+    roots: &[PathBuf],
+    pat: &glob::Pattern,
+    basename_ok: bool,
+    label: Option<&str>,
+) -> (Vec<String>, bool) {
     let mut out: Vec<String> = vec![];
+    let start = Instant::now();
+    let mut last_tick = start;
+    let mut dirs = 0u64;
+    let mut timed_out = false;
     'outer: for root in roots {
         for entry in WalkDir::new(root)
             .into_iter()
             .filter_entry(|e| !skippable(e))
             .filter_map(|e| e.ok())
         {
+            if let Some(lbl) = label {
+                if entry.file_type().is_dir() {
+                    dirs += 1;
+                }
+                search_tick(start, &mut last_tick, dirs, lbl);
+                if start.elapsed() >= SYSTEM_SEARCH_BUDGET {
+                    timed_out = true;
+                    break 'outer;
+                }
+            }
             let path = entry.path();
             let rel = path.strip_prefix(root).unwrap_or(path);
             let hit = pat.matches_path(rel)
@@ -72,19 +131,43 @@ fn do_glob_search(roots: &[PathBuf], pat: &glob::Pattern, basename_ok: bool) -> 
             }
         }
     }
+    if label.is_some() {
+        search_clear();
+    }
     out.sort();
-    (out, false)
+    (out, timed_out)
 }
 
-/// Shared walk+grep logic used by both grep and grep_system.
-fn do_grep_search(roots: &[PathBuf], re: &regex::Regex, include: Option<&glob::Pattern>) -> (Vec<String>, bool) {
+/// Shared walk+grep logic used by both grep and grep_system. `label` is `Some` only for the
+/// whole-system walk: it enables the time budget + live progress line. Returns
+/// `(matches, timed_out)`.
+fn do_grep_search(
+    roots: &[PathBuf],
+    re: &regex::Regex,
+    include: Option<&glob::Pattern>,
+    label: Option<&str>,
+) -> (Vec<String>, bool) {
     let mut out: Vec<String> = vec![];
+    let start = Instant::now();
+    let mut last_tick = start;
+    let mut dirs = 0u64;
+    let mut timed_out = false;
     'outer: for root in roots {
       for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| !skippable(e))
         .filter_map(|e| e.ok())
     {
+        if let Some(lbl) = label {
+            if entry.file_type().is_dir() {
+                dirs += 1;
+            }
+            search_tick(start, &mut last_tick, dirs, lbl);
+            if start.elapsed() >= SYSTEM_SEARCH_BUDGET {
+                timed_out = true;
+                break 'outer;
+            }
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -117,7 +200,10 @@ fn do_grep_search(roots: &[PathBuf], re: &regex::Regex, include: Option<&glob::P
         }
       }
     }
-    (out, false)
+    if label.is_some() {
+        search_clear();
+    }
+    (out, timed_out)
 }
 
 /// Per-session state: the project root and which files have been read (so edit /
@@ -300,9 +386,10 @@ impl Session {
         if args.get("scope").is_some() {
             return "Error: 'scope' is not a valid parameter for 'glob'. To search the entire system, use the 'glob_system' tool instead.".into();
         }
-        let Some(pattern) = args["pattern"].as_str() else {
+        let Some(raw) = args["pattern"].as_str() else {
             return "Error: glob requires 'pattern'.".into();
         };
+        let pattern = unquote(raw);
         let pat = match glob::Pattern::new(pattern) {
             Ok(p) => p,
             Err(e) => return format!("Invalid glob pattern: {e}"),
@@ -312,7 +399,7 @@ impl Session {
         if !root.exists() {
             return ground_missing_path(&root, &self.cwd);
         }
-        let (out, _capped) = do_glob_search(&[root.clone()], &pat, basename_ok);
+        let (out, _capped) = do_glob_search(&[root.clone()], &pat, basename_ok, None);
         if !out.is_empty() {
             return out.join("\n");
         }
@@ -326,21 +413,26 @@ impl Session {
         if args.get("scope").is_some() {
             return "Error: 'scope' is not a valid parameter for 'glob_system'. It always searches the entire system.".into();
         }
-        let Some(pattern) = args["pattern"].as_str() else {
+        let Some(raw) = args["pattern"].as_str() else {
             return "Error: glob_system requires 'pattern'.".into();
         };
+        let pattern = unquote(raw);
         let pat = match glob::Pattern::new(pattern) {
             Ok(p) => p,
             Err(e) => return format!("Invalid glob pattern: {e}"),
         };
         let basename_ok = !pattern.contains('/') && !pattern.contains('\\');
         let roots = system_roots();
-        let (out, capped) = do_glob_search(&roots, &pat, basename_ok);
+        let (out, timed_out) = do_glob_search(&roots, &pat, basename_ok, Some("searching all drives"));
         if !out.is_empty() {
             return out.join("\n");
         }
         let where_ = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
-        let note = if capped { " (search hit its limit before finishing)" } else { "" };
+        let note = if timed_out {
+            format!(" (stopped after the {}s time limit before finishing — narrow the search or give an absolute `path` to `glob`)", SYSTEM_SEARCH_BUDGET.as_secs())
+        } else {
+            String::new()
+        };
         format!("No files matching '{pattern}' anywhere on the system — searched {where_}{note}.")
     }
 }
@@ -412,12 +504,12 @@ fn grep(cwd: &Path, args: &Value) -> String {
     };
     let include = args["include"]
         .as_str()
-        .and_then(|p| glob::Pattern::new(p).ok());
+        .and_then(|p| glob::Pattern::new(unquote(p)).ok());
     let root = resolve(cwd, args["path"].as_str().unwrap_or("."));
     if !root.exists() {
         return ground_missing_path(&root, cwd);
     }
-    let (out, _capped) = do_grep_search(&[root.clone()], &re, include.as_ref());
+    let (out, _capped) = do_grep_search(&[root.clone()], &re, include.as_ref(), None);
     if !out.is_empty() {
         return out.join("\n");
     }
@@ -440,14 +532,18 @@ fn grep_system(_cwd: &Path, args: &Value) -> String {
     };
     let include = args["include"]
         .as_str()
-        .and_then(|p| glob::Pattern::new(p).ok());
+        .and_then(|p| glob::Pattern::new(unquote(p)).ok());
     let roots = system_roots();
-    let (out, capped) = do_grep_search(&roots, &re, include.as_ref());
+    let (out, timed_out) = do_grep_search(&roots, &re, include.as_ref(), Some("grepping all drives"));
     if !out.is_empty() {
         return out.join("\n");
     }
     let where_ = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
-    let note = if capped { " (search hit its limit before finishing)" } else { "" };
+    let note = if timed_out {
+        format!(" (stopped after the {}s time limit before finishing)", SYSTEM_SEARCH_BUDGET.as_secs())
+    } else {
+        String::new()
+    };
     format!("No matches for /{pat}/ anywhere on the system — searched {where_}{note}.")
 }
 
@@ -627,17 +723,17 @@ pub fn schemas() -> Value {
         }},
         {"type":"function","function":{
             "name":"glob",
-            "description":"Fast file pattern matching in the PROJECT directory. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by NAME inside the project. When you need to locate a file by its name, PREFER glob over grep. To search the ENTIRE computer, use the 'glob_system' tool instead.",
+            "description":"Fast file pattern matching in a directory tree. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by NAME. PREFER glob over grep for finding files. When the user names a SPECIFIC directory to look in (e.g. 'find X under C:\\\\Files\\\\Projects'), use this tool and pass that directory as an absolute `path` — do NOT use glob_system, which ignores the path and scans every drive. Only use glob_system when you have no idea where on the computer a file is.",
             "parameters":{"type":"object","properties":{
-                "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or Cargo.toml."},
-                "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root."}
+                "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or Cargo.toml. Do NOT wrap it in quotes."},
+                "path":{"type":"string","description":"Directory to search under. Accepts an ABSOLUTE path (e.g. C:\\\\Files\\\\Projects\\\\sandbox) to search any folder on disk, or a project-relative subdir. Default: project root."}
             },"required":["pattern"]}
         }},
         {"type":"function","function":{
             "name":"glob_system",
-            "description":"Search the ENTIRE computer for files matching a glob pattern. Use this when you need to find files ANYWHERE on the system, not just inside the project directory.",
+            "description":"Search the ENTIRE computer (every drive) for files matching a glob pattern. SLOW and capped at a time limit. Use ONLY when you don't know which directory a file is in. If the user names a directory, use `glob` with that absolute `path` instead.",
             "parameters":{"type":"object","properties":{
-                "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or *.txt."}
+                "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or *.txt. Do NOT wrap it in quotes."}
             },"required":["pattern"]}
         }},
         {"type":"function","function":{
@@ -755,6 +851,48 @@ mod tests {
         ));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn unquote_strips_one_matching_pair() {
+        assert_eq!(unquote("'index.html'"), "index.html");
+        assert_eq!(unquote("\"*.rs\""), "*.rs");
+        assert_eq!(unquote("*.rs"), "*.rs"); // no quotes → unchanged
+        assert_eq!(unquote("'"), "'"); // single char → unchanged
+        assert_eq!(unquote("'a\""), "'a\""); // mismatched quotes → unchanged
+    }
+
+    #[test]
+    fn glob_unquotes_pattern_and_takes_absolute_path() {
+        // the exact shape that was failing: a quoted pattern AND an absolute directory.
+        let d = tmp();
+        std::fs::write(d.join("index.html"), "<html>").unwrap();
+        let mut s = Session::new(std::env::current_dir().unwrap());
+        let out = s.execute(
+            "glob",
+            &json!({ "path": d.to_str().unwrap(), "pattern": "'index.html'" }),
+        );
+        assert!(
+            out.contains("index.html"),
+            "quoted pattern + absolute path should still find the file, got: {out}"
+        );
+    }
+
+    #[test]
+    #[ignore] // walks the real filesystem up to the budget; run explicitly with --ignored --nocapture
+    fn glob_system_respects_time_budget() {
+        let mut s = Session::new(std::env::current_dir().unwrap());
+        let t0 = Instant::now();
+        // matches ~nothing → forces a full (but bounded) walk of every drive
+        let out = s.execute("glob_system", &json!({ "pattern": "zzz_openharn_none_*.qqq" }));
+        let dt = t0.elapsed();
+        eprintln!("\n[demo] glob_system returned in {:.1}s\n[demo] result: {out}", dt.as_secs_f64());
+        assert!(
+            dt <= SYSTEM_SEARCH_BUDGET + Duration::from_secs(4),
+            "should stop near the {}s budget; took {:.1}s",
+            SYSTEM_SEARCH_BUDGET.as_secs(),
+            dt.as_secs_f64()
+        );
     }
 
     #[cfg(windows)]

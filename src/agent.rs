@@ -377,12 +377,12 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
         history.push(assistant);
 
         if tool_calls.is_empty() {
-
             if friendly_mode {
-                println!("\n[intent] {intent} — model responded with text");
+                println!("[intent] {intent} — model responded with text");
             }
-            println!("{}", content);
-            return; // text was already streamed live
+            // NOTE: do NOT print `content` here — stream_response already streamed the
+            // answer live (with a trailing newline). Reprinting it was a duplicate.
+            return;
         }
 
         for tc in &tool_calls {
