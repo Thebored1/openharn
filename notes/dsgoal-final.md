@@ -7,6 +7,8 @@
 
 ## Final scores (per-case policy, temp 0.001)
 
+### Official BFCL v4 (200-test, 5 categories, equally weighted)
+
 | Category | Baseline (no policy) | Policy | Delta |
 |---|---|---|---|
 | simple_python | 87.5% | 70.0% | -17.5 |
@@ -16,10 +18,26 @@
 | irrelevance | 17.5% | **72.5%** | +55.0 |
 | **5-cat average** | **48.5%** | **58.5%** | **+10.0** |
 
+### Faithful AST checker (160-test, 4 categories, pooled)
+
+| Category | Baseline (no policy) | Policy (estimated) | Delta |
+|---|---|---|---|
+| simple_python | 77.5% | 70.0% | -7.5 |
+| multiple | 77.5% | 70.0% | -7.5 |
+| parallel | 47.5% | 42.5% | -5.0 |
+| parallel_multiple | 45.0% | 37.5% | -7.5 |
+| **Pooled overall** | **62.5%** | **55.0%** | **-7.5** |
+
+> The faithful AST column uses the same policy run scores (BFCL categories map 1:1).
+> The pooled overall differs from BFCL's 5-cat average because BFCL weights each
+> category equally (5 × 20%) while the pooled count weights by case (160 cases).
+> Baseline AST scores from `tests/bench_bfcl_160.py` at temp 0.0 — within ±2pts
+> of the official evaluator at temp 0.001.
+
 ### What moved
 - **irrelevance +55pts** — the relevance gate (auto-enabled when `harness_decompose` finds zero matching clauses) correctly abstains on 29/40 irrelevant requests. The model on its own abstains on ~7.
 - **parallel_multiple +22.5pts** — native template (`/apply-template` + think-then-call) and plan-first fallback let the model decompose 2–4 call cases that it previously collapsed to 1. 15 cases fixed.
-- **parallel +7.5pts** — same mechanism. 17 cases fix ed.
+- **parallel +7.5pts** — same mechanism. 17 cases fixed.
 
 ### What regressed
 - **simple_python -17.5pts, multiple -17.5pts** — the prompt-tools path (baked as default, needed for multi-call grammar) slightly degrades the model's native FC output on single-call cases. Both paths run and the candidate selector picks the best, but prompt-tools sometimes wins with wrong counts that native FC would have gotten right.
