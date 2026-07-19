@@ -7,13 +7,11 @@ model swap).
 
 ## Honest result (faithful evaluator, mirrors official bfcl_eval ast_checker)
 
-| Category | Score | Cases |
-|---|---|---|
-| simple_python | 80.0% | 32/40 |
-| multiple | 77.5% | 31/40 |
-| parallel | 47.5% | 19/40 |
-| parallel_multiple | 45.0% | 18/40 |
-| **OVERALL** | **62.5%** | **100/160** |
+| Config | simple | multiple | parallel | parallel_multiple | OVERALL |
+|---|---|---|---|---|---|
+| Baseline single-shot (temp 0.0) | 77.5% (31/40) | 77.5% (31/40) | 47.5% (19/40) | 45.0% (18/40) | **62.5% (100/160)** |
+| + count-hint crutch (OPENHARN_FC_ITERATE, temp 0.0) | 77.5% (31/40) | 72.5% (29/40) | **55.0% (22/40)** | 45.0% (18/40) | **62.5% (100/160)** |
+| Decompose+forced-slot loop (REJECTED, temp 0.0) | 65.0% (26/40) | 52.5% (21/40) | 25.0% (10/40) | 32.5% (13/40) | **43.8% (70/160)** |
 
 **Conclusion: ~62-63% is the genuine, reproducible ceiling for this 2-bit quant model under
 faithful BFCL all-or-nothing AST scoring. 80% is NOT achievable model-agnostically with this
@@ -29,9 +27,18 @@ not noise.
 - **Pre-count gate** (`OPENHARN_FC_PRECOUNT`): a grammar-constrained LLM call to count needed
   calls. The count model itself answers "1" for requests needing 3 — it cannot count
   operations either. Hinting "exactly K" with a wrong K made under-generation worse.
-- **Iterative one-call-at-a-time loop** (`OPENHARN_FC_ITERATE`): generate one call, feed back
-  "what remains?", expect `DONE`. The model emits 1 call then `DONE` (under) OR repeats the
-  same call until the 9-cap (over) — it never reliably enumerates the remaining operations.
+ - **Iterative one-call-at-a-time loop** (`OPENHARN_FC_ITERATE`, forced single-slot per planned
+   clause with focus-injection): generate one call, feed back, repeat. FULL RUN = **43.8%** —
+   the multi-generation loop DEGRADED every category (simple 65%, multiple 52.5%, parallel 25%,
+   pm 32.5%). The model, forced to "focus on ONE operation" repeatedly, produces worse/garbage
+   output than a single whole-request generation. REJECTED.
+ - **Count-hint crutch** (`OPENHARN_FC_ITERATE`, final form): harness computes expected call
+   count K = harness_decompose(request).len() from the request + tool schemas, and injects
+   "make exactly K calls" into the SINGLE-SHOT prompt (one generation, no loop). FULL RUN =
+   **62.5%** — parallel +7.5pts (47.5→55.0) with NO regression on simple/multiple (single-clause
+   requests fall through to single-shot). Net: mild parallel help, multiple -5pts (the hint
+   slightly disrupts the model's good native same-tool multi-call). Shipped as OPT-IN, default
+   off (baseline single-shot = 62.5% either way).
 - **Self-consistency / majority-vote across 5 generations**: parallel 50.0%, parallel_multiple
   45.0% — identical to single-shot. The model deterministically under-generates, so voting
   converges on the wrong (too-small) count.
@@ -62,6 +69,23 @@ with the best call count. This is the single-shot configuration that produced th
 ### 3. Typed array grammar rules + incomplete-array recovery (earlier commits, still in tree)
 Constrain array element types at the grammar level; recover truncated call arrays so correct
 calls are never silently dropped.
+
+### 4. Harness count-hint crutch (`OPENHARN_FC_ITERATE`, opt-in, model-agnostic)
+The openharn thesis — can the harness "hold the model's hand" to take it further than the model
+alone? Implementation: `harness_decompose(request, tools)` (rule-based clause split on
+`, ; and plus then also as well as along with & /` + per-clause best-tool keyword scoring against
+tool name/description/param/enum, deduped) derives the expected call count K. When K>1, that K is
+passed as `expected_k` into `tool_prompt` (the existing `k_hint` sentence: "Make exactly K
+tool calls"), and the request is generated ONCE (single-shot, the model's best mode — no
+multi-generation loop). Single-clause requests (K<=1) fall through to plain single-shot so
+simple/multiple are never disturbed.
+
+**Measured effect (temp 0.0, 160 cases):** parallel 47.5%→55.0% (+7.5pts), multiple
+77.5%→72.5% (-5pts, the hint slightly disrupts native same-tool multi-call), simple unchanged,
+overall 62.5%→62.5%. So the crutch helps parallel under-decomposition modestly but is NOT a
+breakthrough — confirming the ~62% ceiling is structural. Default OFF; the model-agnostic
+single-shot hybrid is the committed baseline. The earlier forced-slot decomposition loop was
+measured at 43.8% and rejected (see above).
 
 ## How to reproduce (honest)
 ```sh

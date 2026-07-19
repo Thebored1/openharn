@@ -1325,53 +1325,24 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
     let (mut pt_total, mut ct_total) = (0u64, 0u64);
 
-    // Iterative generation (OPENHARN_FC_ITERATE): generate calls one at a time, then feed
-    // each back as context ("you made call X — what remains?"). The model decides the count
-    // naturally, iteration by iteration, WITHOUT needing to pre-count the operations. This is
-    // the right harness shape for small quantized models: each step is a trivial single-call
-    // decision, and the conversation tracks what is already done, so it stops on its own.
-    // The model only emits a call (or, in prompt-tools grammar, the DONE sentinel) each pass.
-    // Falls back to the single-shot path if unset or if iterative produces nothing.
-    let iterate = std::env::var_os("OPENHARN_FC_ITERATE").is_some();
-    if iterate {
-        let mut all_calls: Vec<Value> = Vec::new();
-        let mut iter_msgs: Vec<Value> = messages.to_vec();
-        if !iter_msgs.iter().any(|m| m["role"].as_str() == Some("system")) {
-            iter_msgs.insert(0, json!({ "role": "system", "content": "" }));
-        }
-        let iter_sys_base = "Make ONE tool call per turn to help with the user's request. \
-            After your call you will be told what was done and asked if more work remains. \
-            When no more tool calls are needed, reply with exactly: DONE";
-        if let Some(sys) = iter_msgs.iter_mut().find(|m| m["role"].as_str() == Some("system")) {
-            let base = sys["content"].as_str().unwrap_or("");
-            sys["content"] = json!(format!("{base}\n\n{iter_sys_base}\n\n{}", tool_prompt(tools, None)));
-        }
-        while all_calls.len() < 9 {
-            let wire = iterative_wire(&iter_msgs, &all_calls, prompt_tools, tools);
-            let mut body = json!({
-                "model": cfg.model, "messages": wire,
-                "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
-            });
-            if strict && prompt_tools {
-                body["grammar"] = json!(tool_grammar(tools, "done"));
-            }
-            let (tc, pt, ct) = match try_fc_request(&client, &url, &cfg.api_key, body) {
-                Some(x) => x,
-                None => break,
-            };
-            pt_total += pt; ct_total += ct;
-            if tc.is_empty() { break; } // DONE / no call -> stop the loop
-            let name = tc[0]["function"]["name"].as_str().unwrap_or("").to_string();
-            let args = tc[0]["function"]["arguments"].as_str().unwrap_or("{}").to_string();
-            all_calls.push(tc[0].clone());
-            iter_msgs.push(json!({ "role": "assistant", "content": Value::Null, "tool_calls": tc }));
-            iter_msgs.push(json!({
-                "role": "tool", "tool_call_id": "",
-                "content": format!("Call made: {name}({args}). Are there any REMAINING operations? If none remain, reply DONE.")
-            }));
-        }
-        if !all_calls.is_empty() {
-            return (all_calls, String::new(), pt_total, ct_total);
+    // Harness-as-crutch (OPENHARN_FC_ITERATE): the weak model under-generates on multi-operation
+    // requests (emits 1 call when 2-4 are needed — the dominant BFCL failure). The HARNESS
+    // plans the decomposition itself from the request + tool schemas (harness_decompose),
+    // derives the expected call count K, and injects "exactly K calls" into the single-shot
+    // prompt. The model still does ONE generation (its best mode); the harness only supplies
+    // the structural hint it cannot derive on its own. No multi-generation loop (that was
+    // tried and degraded output) — minimal, single-pass intervention.
+    let mut expected_k: Option<usize> = None;
+    if std::env::var_os("OPENHARN_FC_ITERATE").is_some() {
+        let user_req = messages
+            .iter()
+            .rev()
+            .find(|m| m["role"].as_str() == Some("user"))
+            .and_then(|m| m["content"].as_str())
+            .unwrap_or("");
+        let plan = harness_decompose(user_req, tools);
+        if plan.len() > 1 {
+            expected_k = Some(plan.len());
         }
     }
 
@@ -1399,7 +1370,7 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     }
     // Path B: prompt-tools + strict grammar (parallel/multi-call cases)
     if prompt_tools {
-        let wire = flatten_for_prompt_tools(&msgs, tools, None);
+        let wire = flatten_for_prompt_tools(&msgs, tools, expected_k);
         let mut pt_body = json!({
             "model": cfg.model, "messages": wire,
             "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "stream": false,
@@ -1664,27 +1635,6 @@ fn flatten_for_prompt_tools(history: &[Value], schemas: &Value, expected_k: Opti
 /// append a reminder user message ("N call(s) made so far… reply DONE if none remain")
 /// so the model can decide whether to continue. Uses prompt-tools flattening when in
 /// prompt-tools mode, otherwise passes the native message history directly.
-fn iterative_wire(iter_msgs: &[Value], all_calls: &[Value], prompt_tools: bool, tools: &Value) -> Vec<Value> {
-    let base: Vec<Value> = if prompt_tools {
-        flatten_for_prompt_tools(iter_msgs, tools, None)
-    } else {
-        iter_msgs.to_vec()
-    };
-    if all_calls.is_empty() {
-        return base;
-    }
-    let n = all_calls.len();
-    let mut wire = base;
-    wire.push(json!({
-        "role": "user",
-        "content": format!(
-            "{} tool call{} made so far. Complete any REMAINING operations, or reply DONE if none remain.",
-            n, if n == 1 { " was" } else { "s were" }
-        )
-    }));
-    wire
-}
-
 /// In reasoning-off mode a hybrid-thinking model still leaks a (shortened) chain of
 /// thought into the content wrapped in stray `<think>…</think>` tags. Keep only the
 /// real answer: everything after the last `</think>`, with any tags removed.
@@ -1703,6 +1653,111 @@ fn compact(v: &Value) -> String {
     } else {
         s
     }
+}
+
+/// The harness-as-crutch decomposer. A weak quantized model cannot split a multi-operation
+/// request into N tool calls on its own (the dominant BFCL failure). So the harness does the
+/// decomposition itself — purely from the request text and the tool schemas, no model call —
+/// and later drives the model to fill ONE forced slot per planned sub-operation. The model
+/// still supplies the arguments (what it is good at, one call at a time); the harness supplies
+/// the structure (count + which tool + focus) the model cannot.
+///
+/// Returns an ordered plan: one `(tool_name, clause)` per sub-operation. Empty request or no
+/// matching tool yields an empty plan (caller falls back to single-shot).
+fn harness_decompose(request: &str, tools: &Value) -> Vec<(String, String)> {
+    let req = request.trim();
+    if req.is_empty() {
+        return Vec::new();
+    }
+    // 1) Split the request into clauses on conjunctions / punctuation that signal independent
+    //    operations. A clause is one thing the user wants done.
+    let clause_split = Regex::new(r"(?i)\b(?:,|;| and | plus | then | also | as well as | along with |&|/)\b").unwrap();
+    let mut clauses: Vec<String> = clause_split
+        .split(req)
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+    if clauses.is_empty() {
+        clauses.push(req.to_string());
+    }
+
+    // 2) Tokenize each clause into lowercased alnum words for keyword matching.
+    let word_re = Regex::new(r"[a-z0-9_]+").unwrap();
+    let req_words: Vec<String> = word_re
+        .find_iter(&req.to_lowercase())
+        .map(|m| m.as_str().to_string())
+        .collect();
+
+    // Precompute per-tool keyword sets (name + description + parameter names + enum values).
+    let mut tool_kw: Vec<(String, Vec<String>)> = Vec::new();
+    if let Some(arr) = tools.as_array() {
+        for t in arr {
+            let f = &t["function"];
+            let name = f["name"].as_str().unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let mut kw = Vec::new();
+            let d = f["description"].as_str().unwrap_or("").to_lowercase();
+            kw.extend(word_re.find_iter(&d).map(|m| m.as_str().to_string()));
+            // include the dotted name pieces too
+            kw.extend(name.split(['.', '_']).map(|s| s.to_string()));
+            if let Some(props) = f["parameters"]["properties"].as_object() {
+                for (pk, pv) in props {
+                    kw.extend(pk.split(['.', '_']).map(|s| s.to_string()));
+                    if let Some(en) = pv["enum"].as_array() {
+                        for e in en {
+                            if let Some(s) = e.as_str() {
+                                kw.extend(word_re.find_iter(&s.to_lowercase()).map(|m| m.as_str().to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+            tool_kw.push((name, kw));
+        }
+    }
+
+    // 3) Score each clause against each tool; pick the best tool for that clause.
+    fn score(clause_words: &[String], tool_words: &[String]) -> f64 {
+        if clause_words.is_empty() || tool_words.is_empty() {
+            return 0.0;
+        }
+        let mut hit = 0;
+        for w in clause_words {
+            if w.len() >= 3 && tool_words.iter().any(|t| t == w) {
+                hit += 1;
+            }
+        }
+        hit as f64 / clause_words.len() as f64
+    }
+
+    let mut plan: Vec<(String, String)> = Vec::new();
+    for clause in &clauses {
+        let cwords: Vec<String> = word_re
+            .find_iter(&clause.to_lowercase())
+            .map(|m| m.as_str().to_string())
+            .collect();
+        let mut best: Option<(f64, &String)> = None;
+        for (name, kw) in &tool_kw {
+            let s = score(&cwords, kw);
+            if s > 0.0 {
+                if best.as_ref().map(|(bs, _)| s > *bs).unwrap_or(true) {
+                    best = Some((s, name));
+                }
+            }
+        }
+        if let Some((_, name)) = best {
+            plan.push((name.clone(), clause.clone()));
+        }
+    }
+
+    // 4) Drop EXACT duplicate plans (identical tool + identical clause) so a single clause
+    //    that happens to match the same tool twice doesn't produce two identical calls.
+    //    Genuinely distinct clauses for the same tool (e.g. "high ..." vs "low ...") are kept.
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    plan.retain(|k| seen.insert(k.clone()));
+    plan
 }
 
 #[cfg(test)]

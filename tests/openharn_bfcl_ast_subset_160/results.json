@@ -1,16 +1,16 @@
 {
-  "overall_pct": 61.875,
+  "overall_pct": 62.5,
   "per_category": {
     "simple_python": {
       "num": 31.0,
       "den": 40
     },
     "multiple": {
-      "num": 31.0,
+      "num": 29.0,
       "den": 40
     },
     "parallel": {
-      "num": 19.0,
+      "num": 22.0,
       "den": 40
     },
     "parallel_multiple": {
