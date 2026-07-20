@@ -1406,6 +1406,15 @@ fn derive_policy(cfg: &Config, plan_len: usize, has_tools: bool) -> CasePolicy {
 pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Value>, String, u64, u64) {
     let has_tools = tools.as_array().map(|a| !a.is_empty()).unwrap_or(false);
 
+    // BFCL sends messages as [[{role,content}]] (double-nested). llama-server
+    // requires [{role,content}]. Flatten one level so the model sees proper messages.
+    let flat: Vec<Value> = if messages.len() == 1 && messages[0].is_array() {
+        messages[0].as_array().cloned().unwrap_or_default()
+    } else {
+        messages.to_vec()
+    };
+    let messages = &flat;
+
     // ---- Per-request category-aware policy ----------------------------------
     // Derive the harness policy from the request signal itself, so each case gets
     // the configuration it needs (irrelevance→gate+abstain, multi→native-template
@@ -1504,9 +1513,24 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     let mut candidates: Vec<(Vec<Value>, u64, u64)> = Vec::new();
     // Path A: native tool-calling (strong for single calls; skipped when the policy
     // wants prompt-tools, since prompt-tools is the more reliable multi-call path).
+    let mut native_empty = false;
     if !prompt_tools {
         if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, make_native_request(cfg, &msgs, tools)) {
+            if tc.is_empty() { native_empty = true; }
             if !tc.is_empty() || candidates.is_empty() { candidates.push((tc, pt, ct)); }
+        }
+    }
+    // Path A-fallback: when native FC returns NOTHING, retry with prompt-tools + strict
+    // "call" grammar. Recovers text-gen failures without forcing strict on every case.
+    if native_empty {
+        let wire = flatten_for_prompt_tools(&msgs, tools, expected_k);
+        let mut fb = json!({
+            "model": cfg.model, "messages": wire,
+            "temperature": cfg.temperature, "max_tokens": policy_max_tokens, "stream": false,
+            "grammar": tool_grammar(tools, "call"),
+        });
+        if let Some((tc, pt, ct)) = try_fc_request(&client, &url, &cfg.api_key, fb) {
+            if !tc.is_empty() { candidates.clear(); candidates.push((tc, pt, ct)); }
         }
     }
     // Path B: prompt-tools + strict grammar (parallel/multi-call cases, per policy).
