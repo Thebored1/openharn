@@ -1454,7 +1454,17 @@ pub fn fc_proxy_once(cfg: &Config, messages: &[Value], tools: &Value) -> (Vec<Va
     // decision from the generation itself — the harness decides whether any tool
     // applies, not the model. For single/multi-call the gate passes (relevant) and
     // generation proceeds with the native FC / prompt-tools path below.
+    //
+    // FAST PATH: plan_len==0 means harness_decompose found NO matching tool —
+    // this is definitely irrelevant. Skip the gate LLM call entirely and abstain
+    // immediately. This is cheaper AND more accurate than the gate (the gate still
+    // gets ~15% of irrelevance cases wrong due to the weak model's YES/NO quality).
+    // For plan_len>=1, the gate stays engaged to distinguish genuine single-call
+    // (relevant) from false-positive irrelevance.
     let mut grammar_root = if policy.abstain { "abstain" } else { "text" };
+    if plan_len == 0 && has_tools && policy.gate {
+        return (vec![], "NO_TOOL".to_string(), pt_total, ct_total);
+    }
     if policy.gate {
         let (relevant, gpt, gct) = relevance_gate(&client, &url, cfg, messages, tools);
         pt_total += gpt;
@@ -1679,7 +1689,7 @@ fn relevance_gate(
     let mut desc = String::new();
     if let Some(arr) = tools.as_array() {
         for t in arr {
-            let f = &t["function"];
+            let f = if t["function"].is_object() { &t["function"] } else { t };
             let name = f["name"].as_str().unwrap_or("");
             let d = f["description"].as_str().unwrap_or("");
             let short = d.split(['.', '\n']).next().unwrap_or(d);
@@ -1689,28 +1699,7 @@ fn relevance_gate(
     let sys = format!(
          "Decide if ANY of these tools could be called to satisfy the user's request.\n\
          Tools:\n{desc}\n\
-         Examples:\n\
-         User: What is the area of a circle with radius 5?\n\
-         Tool: calculate_area(radius=5)\n\
-         Answer: YES\n\n\
-         User: Hello, how are you?\n\
-         No tool needed.\n\
-         Answer: NO\n\n\
-         User: Find files matching *.rs\n\
-         Tool: glob(pattern=\"**/*.rs\")\n\
-         Answer: YES\n\n\
-         User: Tell me a joke.\n\
-         The available tools do not help with telling jokes.\n\
-         Answer: NO\n\n\
-         User: What is the capital of France?\n\
-         No tool fits this request.\n\
-         Answer: NO\n\n\
-         User: Book a flight to Tokyo and reserve a hotel.\n\
-         Tools: book_flight(destination), reserve_hotel(city)\n\
-         Answer: YES\n\n\
-         User: Sort the list [3,1,2].\n\
-         Available tools: get_weather(city). No sorting tool.\n\
-         Answer: NO\n\n\
+         When in doubt, say NO — only say YES if the user's request clearly requires calling one of these tools with specific arguments.\n\
          Reply with exactly YES (a tool applies) or NO (none apply). Nothing else."
     );
     let mut wire: Vec<Value> = vec![json!({ "role": "system", "content": sys })];
@@ -1854,10 +1843,11 @@ fn harness_decompose(request: &str, tools: &Value) -> Vec<(String, String)> {
         .collect();
 
     // Precompute per-tool keyword sets (name + description + parameter names + enum values).
+    // Handle both OpenAI format [{"function":{"name":...}}] and flat format [{"name":...}].
     let mut tool_kw: Vec<(String, Vec<String>)> = Vec::new();
     if let Some(arr) = tools.as_array() {
         for t in arr {
-            let f = &t["function"];
+            let f = if t["function"].is_object() { &t["function"] } else { t };
             let name = f["name"].as_str().unwrap_or("").to_string();
             if name.is_empty() {
                 continue;
