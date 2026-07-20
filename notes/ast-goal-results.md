@@ -13,20 +13,21 @@ model swap).
 | per-case policy (run A, temp 0.001) | 72.5% | 72.5% | 47.5% | 42.5% | 75.0% | **62.0%** |
 | per-case policy (run B, temp 0.001) | 75.0% | 67.5% | 37.5% | 32.5% | 82.5% | **59.0%** |
 | per-case policy + flatten + native-empty fallback (run D, temp 0.001) | **75.0%** | **77.5%** | **52.5%** | **42.5%** | **67.5%** | **63.0%** |
+| + decompose fix + plan_len==0 fast path (run E, temp 0.001) | **77.5%** | **65.0%** | **57.5%** | **35.0%** | **87.5%** | **64.5%** |
 
 ### Real full-200 run WITH per-case policy (runs on 2026-07-19/20)
 
 Ran `bfcl generate` (200 cases, temp 0.001) + `bfcl evaluate --partial-eval` against the
 openharn FC-proxy with the per-case policy active (default, no `OPENHARN_NO_POLICY`).
 
-| Category | Pre-policy | Run A | Run B | **Run D (flatten+fallback)** |
-|---|---|---|---|---|
-| simple_python | 87.5% | 72.5% | 75.0% | **75.0%** |
-| multiple | 87.5% | 72.5% | 67.5% | **77.5%** |
-| parallel | 35.0% | 47.5% | 37.5% | **52.5%** |
-| parallel_multiple | 15.0% | 42.5% | 32.5% | **42.5%** |
-| irrelevance | 17.5% | 75.0% | 82.5% | **67.5%** |
-| **5-cat avg** | **48.5%** | **62.0%** | **59.0%** | **63.0%** |
+| Category | Pre-policy | Run A | Run B | Run D | **Run E (decompose fix)** |
+|---|---|---|---|---|---|
+| simple_python | 87.5% | 72.5% | 75.0% | 75.0% | **77.5%** |
+| multiple | 87.5% | 72.5% | 67.5% | 77.5% | **65.0%** |
+| parallel | 35.0% | 47.5% | 37.5% | 52.5% | **57.5%** |
+| parallel_multiple | 15.0% | 42.5% | 32.5% | 42.5% | **35.0%** |
+| irrelevance | 17.5% | 75.0% | 82.5% | 67.5% | **87.5%** |
+| **5-cat avg** | **48.5%** | **62.0%** | **59.0%** | **63.0%** | **64.5%** |
 
 **Run D** adds two fixes to the proxy:
 1. **Message flatten**: BFCL sends `[[{role,content}]]` (double-nested); llama-server requires
@@ -34,6 +35,16 @@ openharn FC-proxy with the per-case policy active (default, no `OPENHARN_NO_POLI
 2. **Native-empty→strict fallback**: when native FC returns empty, retry with
    `flatten_for_prompt_tools` + strict `call` grammar. Recovers text-gen failures without
    forcing strict on every case.
+
+**Run E** adds three more fixes:
+1. **Fixed `harness_decompose` + `relevance_gate` tool format**: both expected OpenAI format
+   `[{"function":{"name":...}}]` but BFCL sends flat `[{"name":...}]`. Without this fix,
+   `plan_len` was always 0 for ALL cases (tools were silently skipped).
+2. **plan_len==0 fast path**: when `harness_decompose` finds NO matching tool, skip the gate
+   LLM call entirely and abstain immediately. Cheaper AND more accurate than the gate (the
+   weak model gets ~15% of irrelevance wrong).
+3. **Simplified gate prompt**: removed examples that confused the 2-bit model, added
+   "When in doubt, say NO" directive. Irrelevance jumped from 67.5% to 87.5%.
 
 **Config X (runs A & B) is the correct/best config:** native FC for single-call
 (`prompt_tools` opt-IN, OFF by default), relevance gate ON for `plan_len<=1` (this is what
