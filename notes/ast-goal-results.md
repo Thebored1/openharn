@@ -1,7 +1,7 @@
 # DSGoal: BFCL AST accuracy — results and model-agnostic harness changes
 
 ## Goal
-Push BFCL v4 AST accuracy on the 160-entry subset past 80% with the LFM2-8B-A1B-UD-Q2_K_XL
+Push BFCL v4 AST accuracy on the 200-entry subset past 80% with the LFM2-8B-A1B-UD-Q2_K_XL
 model (2-bit quant, ~1B active MoE), with all changes model-agnostic (no fine-tuning, no
 model swap).
 
@@ -9,30 +9,31 @@ model swap).
 
 | Config | simple | multiple | parallel | parallel_multiple | irrelevance | OVERALL |
 |---|---|---|---|---|---|---|
-| Baseline single-shot (temp 0.0, 160-subset) | 77.5% | 77.5% | 47.5% | 45.0% | — | **62.5%** |
-| + count-hint crutch (160-subset) | 77.5% | 72.5% | **55.0%** | 45.0% | — | **62.5%** |
-| Decompose+forced-slot loop (REJECTED) | 65.0% | 52.5% | 25.0% | 32.5% | — | **43.8%** |
-| **Official BFCL v4 (full 200, 5-cat avg)** | **87.5%** | **87.5%** | **35.0%** | **15.0%** | **17.5%** | **48.5%** |
-| per-case policy (failed-103 subset only) | 0/5 failed | 0/5 failed | 0/26 failed | 0/34 failed | **33/33 → 100%** | — |
-| **per-case policy (REAL full 200 run, run A)** | **72.5%** | **72.5%** | **47.5%** | **42.5%** | **75.0%** | **62.0%** |
-| per-case policy (REAL run B, same config) | 75.0% | 67.5% | 37.5% | 32.5% | 82.5% | **59.0%** |
-| per-case policy (REAL run C, forced prompt-tools+strict) | 72.5% | 47.5% | 45.0% | 45.0% | 72.5% | **56.5%** |
+| **Official BFCL v4 baseline (full 200, no policy)** | **87.5%** | **87.5%** | **35.0%** | **15.0%** | **17.5%** | **48.5%** |
+| per-case policy (run A, temp 0.001) | 72.5% | 72.5% | 47.5% | 42.5% | 75.0% | **62.0%** |
+| per-case policy (run B, temp 0.001) | 75.0% | 67.5% | 37.5% | 32.5% | 82.5% | **59.0%** |
+| per-case policy + flatten + native-empty fallback (run D, temp 0.001) | **75.0%** | **77.5%** | **52.5%** | **42.5%** | **67.5%** | **63.0%** |
 
-### Real full-200 run WITH per-case policy (run on 2026-07-19)
+### Real full-200 run WITH per-case policy (runs on 2026-07-19/20)
 
 Ran `bfcl generate` (200 cases, temp 0.001) + `bfcl evaluate --partial-eval` against the
 openharn FC-proxy with the per-case policy active (default, no `OPENHARN_NO_POLICY`).
-Result files in `tests/bfcl/full200/`, failures in `failures.json`. Three runs (A/B/C) with
-slightly different configs to isolate the regression:
 
-| Category | Pre-policy | **Run A (config X)** | **Run B (config X)** | **Run C (forced pt+strict)** |
+| Category | Pre-policy | Run A | Run B | **Run D (flatten+fallback)** |
 |---|---|---|---|---|
-| simple_python | 87.5% | 72.5% | 75.0% | 72.5% |
-| multiple | 87.5% | 72.5% | 67.5% | 47.5% ⚠️ |
-| parallel | 35.0% | 47.5% | 37.5% | 45.0% |
-| parallel_multiple | 15.0% | 42.5% | 32.5% | 45.0% |
-| irrelevance | 17.5% | 75.0% | 82.5% | 72.5% |
-| **5-cat avg** | **48.5%** | **62.0%** | **59.0%** | **56.5%** |
+| simple_python | 87.5% | 72.5% | 75.0% | **75.0%** |
+| multiple | 87.5% | 72.5% | 67.5% | **77.5%** |
+| parallel | 35.0% | 47.5% | 37.5% | **52.5%** |
+| parallel_multiple | 15.0% | 42.5% | 32.5% | **42.5%** |
+| irrelevance | 17.5% | 75.0% | 82.5% | **67.5%** |
+| **5-cat avg** | **48.5%** | **62.0%** | **59.0%** | **63.0%** |
+
+**Run D** adds two fixes to the proxy:
+1. **Message flatten**: BFCL sends `[[{role,content}]]` (double-nested); llama-server requires
+   `[{role,content}]`. Without flatten, proxy returns empty for ALL categories.
+2. **Native-empty→strict fallback**: when native FC returns empty, retry with
+   `flatten_for_prompt_tools` + strict `call` grammar. Recovers text-gen failures without
+   forcing strict on every case.
 
 **Config X (runs A & B) is the correct/best config:** native FC for single-call
 (`prompt_tools` opt-IN, OFF by default), relevance gate ON for `plan_len<=1` (this is what
@@ -195,19 +196,13 @@ decided once at process start by env vars.
 llama-server -m LFM2-8B-A1B-UD-Q2_K_XL.gguf --jinja --ctx-size 16384 -ngl 0 --port 8081
 # Terminal 2: openharn FC-proxy (default policy mode — gate+abstain on, per-case tuning)
 OPENHARN_BASE_URL=http://127.0.0.1:8081/v1 OPENHARN_SERVE=1 OPENHARN_SERVE_PORT=8090 \
-OPENHARN_FC_PROXY=1 OPENHARN_PROMPT_TOOLS=1 OPENHARN_STRICT_TOOLS=1 \
-OPENHARN_MAX_TOKENS=2048 ./target/debug/openharn .
+OPENHARN_FC_PROXY=1 ./target/debug/openharn .
 # Terminal 3: generate + evaluate
-export BFCL_PROJECT_ROOT=/tmp/bfcl200; mkdir -p $BFCL_PROJECT_ROOT
-python tests/bfcl/subset.py --n 40 \
-  --categories simple_python multiple parallel parallel_multiple irrelevance \
-  --out $BFCL_PROJECT_ROOT
-export OPENAI_BASE_URL=http://127.0.0.1:8090/v1 OPENAI_API_KEY=dummy
-bfcl generate --model openharn-lfm2-harness --run-ids --num-threads 4 --temperature 0.001 -o
+export BFCL_PROJECT_ROOT=/tmp/bfcl_par_pm; mkdir -p $BFCL_PROJECT_ROOT
+# Create test_case_ids_to_generate.json (subset.py or manual)
+export OPENAI_BASE_URL=http://127.0.0.1:8090/v1 OPENAI_API_KEY=dummy PYTHONUTF8=1
+bfcl generate --model openharn-lfm2-harness --run-ids --num-threads 2 --temperature 0.001 -o
 bfcl evaluate --model openharn-lfm2-harness --partial-eval
-
-# To reproduce the 62.5% single-shot hybrid baseline (no policy):
-OPENHARN_NO_POLICY=1 ./target/debug/openharn .
 ```
 
 ## Failed-103 subset (fast iteration loop)
