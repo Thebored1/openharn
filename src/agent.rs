@@ -142,8 +142,21 @@ fn run_friendly_response(
 /// Run one user request to completion, mutating `history` (the live conversation)
 /// and `session` (read-tracking) in place so the next request keeps full context.
 pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session, user: &str) {
-    if history.is_empty() {
-        history.push(json!({ "role": "system", "content": SYSTEM }));
+    // Always pin the system prompt at the head of the conversation. llama-server
+    // KV-caches the prompt prefix; prefix cache reuse is what makes turn 2+ instant.
+    // If we only added SYSTEM on turn 1 (when history was empty), every later turn
+    // would start the wire with a different prefix and the cache would miss —
+    // re-prefilling the whole prompt each message. Keep the prefix identical every
+    // turn: SYSTEM first, then whatever the caller provided (system callers'
+    // system prompt is dropped so the prefix doesn't shift).
+    if let Some(first) = history.first() {
+        if first["role"] == "system" {
+            history[0]["content"] = json!(SYSTEM);
+        } else {
+            history.insert(0, json!({ "role": "system", "content": SYSTEM }));
+        }
+    } else {
+        history.insert(0, json!({ "role": "system", "content": SYSTEM }));
     }
     history.push(json!({ "role": "user", "content": user }));
 

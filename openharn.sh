@@ -31,7 +31,7 @@ if curl -s -m2 "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"status":"
   echo "reusing model already on :$PORT"
 else
   echo "starting model on :$PORT ..."
-  args=( -m "$MODEL" --jinja --ctx-size 16384 -ngl 99 --host 127.0.0.1 --port "$PORT" --no-warmup )
+  args=( -m "$MODEL" --jinja --ctx-size 16384 -ngl 99 --host 127.0.0.1 --port "$PORT" --no-warmup --parallel 1 )
   [ "$THINK" = 1 ] && args+=( --chat-template-kwargs '{"enable_thinking":true}' --reasoning-format deepseek )
   "$LLAMA_SERVER" "${args[@]}" >/tmp/openharn-llama.log 2>&1 &
   for _ in $(seq 1 60); do

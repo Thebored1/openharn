@@ -37,7 +37,7 @@ if ($listening -and $currentMode -ne $wantMode) {
 if (-not $listening) {
     Write-Host "starting MiniCPM (0.8B, $wantMode mode) on :$Port ..." -ForegroundColor Cyan
     Start-Process -FilePath $LlamaServer -WindowStyle Hidden -ArgumentList `
-        ("-m `"$Model`" --jinja --ctx-size 16384 -ngl 99 --host 127.0.0.1 --port $Port --no-warmup" + $thinkArgs)
+        ("-m `"$Model`" --jinja --ctx-size 16384 -ngl 99 --host 127.0.0.1 --port $Port --no-warmup --parallel 1" + $thinkArgs)
     Set-Content $marker $wantMode
     for ($i = 0; $i -lt 60; $i++) {
         try { if ((Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 2).status -eq "ok") { break } } catch {}
