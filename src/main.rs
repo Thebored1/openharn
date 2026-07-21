@@ -4,7 +4,7 @@ mod tools;
 mod slm_harness;
 mod serve;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -102,6 +102,17 @@ fn main() {
 
     let friendly_results = std::env::var_os("OPENHARN_FRIENDLY_RESULTS").is_some();
 
+    // Tool schemas are never hardcoded. In the REPL they come from a JSON file
+    // pointed to by OPENHARN_TOOLS_SCHEMA (an OpenAI `tools` array). If unset, the
+    // REPL runs without tools (chat only). The `--serve` API instead takes schemas
+    // from each request's `tools` field.
+    let tools_schema: Value = std::env::var("OPENHARN_TOOLS_SCHEMA")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .and_then(|p| std::fs::read_to_string(&p).ok())
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .unwrap_or_else(|| json!([]));
+
     let max_tokens: u32 = std::env::var("OPENHARN_MAX_TOKENS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -155,7 +166,7 @@ fn main() {
                 session = tools::Session::new(cwd.clone());
                 println!("(context reset)");
             }
-            _ => agent::run(&cfg, &mut history, &mut session, line),
+            _ => agent::run(&cfg, &mut history, &mut session, line, &tools_schema),
         }
     }
 }

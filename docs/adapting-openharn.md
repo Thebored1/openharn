@@ -31,6 +31,7 @@ No rebuild needed. Set these before launching openharn.
 | `OPENHARN_MODEL` | model name in the request (default `local`) | server needs a specific name |
 | `OPENHARN_API_KEY` | bearer token | cloud provider |
 | `OPENHARN_TOOLS` | comma list, e.g. `read,grep,glob` — restrict the set | smaller, safer tool surface |
+| `OPENHARN_TOOLS_SCHEMA` | path to a JSON file with the OpenAI `tools` array; REPL-only (default none → chat-only) | REPL needs tool schemas; serve mode uses `req["tools"]` |
 | `OPENHARN_NARROW` | preset: `read,grep,glob` **+ strict + prompt-tools** | most reliable narrow agent for a weak model |
 | `OPENHARN_STRICT_TOOLS` | grammar-force every reply to a schema-valid call or plain text | your model malforms calls |
 | `OPENHARN_PROMPT_TOOLS` | describe tools in the prompt, omit the `tools` field | server has no tool API (bitnet.cpp, old forks) |
@@ -101,9 +102,15 @@ two paths — pick by model:
   OPENHARN_FRIENDLY_RESULTS=1 OPENHARN_PROMPT_TOOLS=1 cargo run -- .
   ```
 
-Custom tool set:
+Custom tool set (subset a schema file):
 ```sh
-OPENHARN_TOOLS=read,grep,glob,edit OPENHARN_STRICT_TOOLS=1 cargo run -- .
+OPENHARN_TOOLS_SCHEMA=notes/sample-tools.json OPENHARN_TOOLS=read,grep,glob,edit \
+  OPENHARN_STRICT_TOOLS=1 cargo run -- .
+```
+
+Custom tool set (entirely your own tools):
+```sh
+OPENHARN_TOOLS_SCHEMA=my-tools.json cargo run -- .
 ```
 
 Reasoning model too slow on CPU:
@@ -118,17 +125,12 @@ Each of these is a one-spot change.
 **System prompt** — edit `src/prompt.txt` (plain text, compiled in). Rebuild with
 `cargo build`.
 
-**Add / remove / reword a tool** — two spots in `src/tools.rs`:
-1. `schemas()` — the tool list the model sees (name, description, parameters). This also
-   drives the prompt-tools description and the strict grammar automatically.  
-   *System-wide search tools are dedicated `glob_system` and `grep_system` (the `scope`
-   parameter was removed).*
-2. `Session::execute()` — the `match` that runs each tool by name. Add a
-   `"mytool" => self.mytool(args),` arm and write the function (takes JSON `args`, returns a
-   `String`).
-
-Grounding, grammar, and prompt-tools rendering all derive from `schemas()`, so a new tool
-is picked up everywhere.
+**Add a new handler** — in `src/tools.rs`, `Session::execute()` — add a
+`"mytool" => self.mytool(args),` arm and write the function (takes JSON `args`, returns a
+`String`). The schema must be supplied by the caller (per-request or
+`OPENHARN_TOOLS_SCHEMA` file) — openharn never hardcodes schemas. The prompt-tools
+description and strict grammar derive from whatever schemas are supplied, so advertising
+the new tool works automatically. See [`dynamic-schemas.md`](dynamic-schemas.md).
 
 **Stricter / looser** — in `src/agent.rs`: the grammar is `tool_grammar()` (constrains tool
 name, argument keys, value types); the prompt-tools description is `tool_prompt()`; the

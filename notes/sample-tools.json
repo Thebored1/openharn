@@ -1,0 +1,102 @@
+[
+  {"type":"function","function":{
+    "name":"read",
+    "description":"Read a file. Returns its text with 1-based line numbers. Use `offset`/`limit` to page through large files. You must read a file before you edit or write it.",
+    "parameters":{"type":"object","properties":{
+      "path":{"type":"string","description":"File path, relative to the project root or absolute."},
+      "offset":{"type":"integer","description":"1-based line to start from (optional)."},
+      "limit":{"type":"integer","description":"Max lines to read (optional)."}
+    },"required":["path"]}
+  }},
+  {"type":"function","function":{
+    "name":"edit",
+    "description":"Performs exact string replacements in files. You must `read` the file first. `old_string` must match the existing text (whitespace, indentation, and escaped newlines are tolerated). It FAILS if `old_string` is not found, or is found multiple times — then add surrounding lines to make it unique, or set replace_all. Never reprint the whole file; make a targeted edit.",
+    "parameters":{"type":"object","properties":{
+      "path":{"type":"string"},
+      "old_string":{"type":"string","description":"The exact existing text to replace."},
+      "new_string":{"type":"string","description":"The replacement text."},
+      "replace_all":{"type":"boolean","description":"Replace every occurrence (default false)."}
+    },"required":["path","old_string","new_string"]}
+  }},
+  {"type":"function","function":{
+    "name":"write",
+    "description":"Write a file to the filesystem, overwriting any existing file. If the file exists you MUST `read` it first. ALWAYS prefer editing existing files; only create new files when needed. Never proactively create documentation/README files unless asked.",
+    "parameters":{"type":"object","properties":{
+      "path":{"type":"string"},
+      "content":{"type":"string","description":"The full file contents to write."}
+    },"required":["path","content"]}
+  }},
+  {"type":"function","function":{
+    "name":"glob",
+    "description":"Fast file pattern matching in the PROJECT directory. Supports glob patterns like \"**/*.rs\" or \"src/**/*.ts\". Returns matching file paths. Use this to find files by NAME inside the project. When you need to locate a file by its name, PREFER glob over grep. To search the ENTIRE computer, use the 'glob_system' tool instead.",
+    "parameters":{"type":"object","properties":{
+      "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or Cargo.toml."},
+      "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root."}
+    },"required":["pattern"]}
+  }},
+  {"type":"function","function":{
+    "name":"glob_system",
+    "description":"Search the ENTIRE computer for files matching a glob pattern. Use this when you need to find files ANYWHERE on the system, not just inside the project directory.",
+    "parameters":{"type":"object","properties":{
+      "pattern":{"type":"string","description":"Glob pattern, e.g. **/*.rs or *.txt."}
+    },"required":["pattern"]}
+  }},
+  {"type":"function","function":{
+    "name":"grep",
+    "description":"Search file CONTENTS by regex in the PROJECT directory. Returns matching `file:line: text`. Supports full regex. Filter files with `include` (e.g. \"*.rs\", \"*.{ts,tsx}\"). Use grep ONLY to search file CONTENTS — never to find a file by its name (use glob or glob_system for that). To search the ENTIRE computer, use the 'grep_system' tool instead.",
+    "parameters":{"type":"object","properties":{
+      "pattern":{"type":"string","description":"Regular expression to search for in file contents."},
+      "include":{"type":"string","description":"Only search files whose name matches this glob (optional)."},
+      "path":{"type":"string","description":"A subdirectory of the project to search under (optional). Default: project root."}
+    },"required":["pattern"]}
+  }},
+  {"type":"function","function":{
+    "name":"grep_system",
+    "description":"Search the CONTENTS of ALL files on the ENTIRE computer by regex. Use this when you need to search outside the project directory. Supports full regex; filter with `include`.",
+    "parameters":{"type":"object","properties":{
+      "pattern":{"type":"string","description":"Regular expression to search for in file contents."},
+      "include":{"type":"string","description":"Only search files whose name matches this glob (optional)."}
+    },"required":["pattern"]}
+  }},
+  {"type":"function","function":{
+    "name":"bash",
+    "description":"Run a shell command in the project root; returns stdout+stderr. Use for building, running tests, git, etc.",
+    "parameters":{"type":"object","properties":{
+      "command":{"type":"string","description":"The shell command to run."}
+    },"required":["command"]}
+  }},
+  {"type":"function","function":{
+    "name":"multiedit","description":"Make MULTIPLE edits to a SINGLE file in one call. You must `read` the file first. Edits are applied in order; each `old_string` must match. All-or-nothing: if any edit fails, nothing is written. Prefer this over many `edit` calls on the same file.",
+    "parameters":{"type":"object","properties":{
+      "path":{"type":"string"},
+      "edits":{"type":"array","items":{"type":"object","properties":{
+        "old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean"}
+      },"required":["old_string","new_string"]}}
+    },"required":["path","edits"]}
+  }},
+  {"type":"function","function":{
+    "name":"webfetch","description":"Fetch a URL and return its readable text content (HTML stripped). Use for docs, references, or a page the user gives you. Only fetch URLs the user provided or that are clearly for programming help.",
+    "parameters":{"type":"object","properties":{
+      "url":{"type":"string","description":"The URL to fetch."}
+    },"required":["url"]}
+  }},
+  {"type":"function","function":{
+    "name":"todowrite","description":"Create/replace the task todo list to plan and track multi-step work. Send the FULL list each time. Mark items in_progress when you start and completed when done, so the user sees progress.",
+    "parameters":{"type":"object","properties":{
+      "todos":{"type":"array","items":{"type":"object","properties":{
+        "content":{"type":"string","description":"What the step is."},
+        "status":{"type":"string","enum":["pending","in_progress","completed"]}
+      },"required":["content","status"]}}
+    },"required":["todos"]}
+  }},
+  {"type":"function","function":{
+    "name":"todoread","description":"Read the current todo list.",
+    "parameters":{"type":"object","properties":{}}
+  }},
+  {"type":"function","function":{
+    "name":"python","description":"Run Python code in a sandboxed subprocess. Returns stdout/stderr. Use for computation, data processing, or any task expressible as code. Variables persist across calls within the same session. IMPORTANT: Use print() to output results — the last expression is NOT automatically returned.",
+    "parameters":{"type":"object","properties":{
+      "code":{"type":"string","description":"Python code to execute."}
+    },"required":["code"]}
+  }}
+]

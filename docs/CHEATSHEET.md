@@ -39,6 +39,7 @@ $env:OPENHARN_BASE_URL="http://127.0.0.1:8080/v1"
 | `OPENHARN_STRICT_TOOLS` | *(unset)* | set to `1` to **grammar-force** every reply into a schema-valid tool call or plain text — a weak model then can't invent field names or malform a call. (Implies prompt-tools.) |
 | `OPENHARN_TOOLS` | *(all)* | comma list to **restrict** the tool set, e.g. `read,grep,glob`. |
 | `OPENHARN_NARROW` | *(unset)* | set to `1` for the **narrow preset** — read-only navigation (`read,grep,glob`) + strict + prompt-tools. The most reliable mode for a weak model. |
+| `OPENHARN_TOOLS_SCHEMA` | *(none)* | path to a JSON file containing the OpenAI `tools` array to use in the REPL (default: no tools, chat only). Serve mode uses the request body's `tools` field instead. |
 
 Full guide to modes + how to modify openharn: [`adapting-openharn.md`](adapting-openharn.md).
 
@@ -57,23 +58,16 @@ First CLI arg = the working directory the agent operates on (default: cwd).
 
 ---
 
-## The 10 tools
+## Dynamic tool schemas
 
-| Tool | What it does |
-|---|---|
-| `read` | read a file (1-based line numbers); required before `edit`/`write` |
-| `write` | write/overwrite a file (must `read` first if it exists) |
-| `edit` | anchored exact-string replace (tolerates whitespace/indent/escape drift) |
-| `multiedit` | several edits to one file, all-or-nothing |
-| `glob` | find files by pattern, e.g. `**/*.rs` |
-| `grep` | regex search of file contents, filter with `include` |
-| `bash` | run a shell command in the working dir |
-| `webfetch` | fetch a URL as readable text |
-| `todowrite` / `todoread` | plan + track multi-step work |
+Tool schemas are **never hardcoded** — they come from the caller (per-request in serve
+mode, or the `OPENHARN_TOOLS_SCHEMA` file in the REPL). openharn advertises exactly what
+it receives and dispatches calls by name to built-in handlers (`read`, `edit`, `glob`,
+`grep`, `bash`, etc.). See [`dynamic-schemas.md`](dynamic-schemas.md).
 
-**Search scope:** `glob`/`grep` default to the **project** dir. To search the whole
-computer, the model passes `scope:"system"` (openharn resolves every drive itself — it
-never has to produce a `C:\` path).
+To subset the caller-supplied tools, use `OPENHARN_TOOLS` or `OPENHARN_NARROW` (same as
+before). The handlers are hardcoded; a schema whose `name` doesn't match a handler
+returns an error.
 
 ---
 

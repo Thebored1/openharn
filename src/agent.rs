@@ -141,7 +141,7 @@ fn run_friendly_response(
 
 /// Run one user request to completion, mutating `history` (the live conversation)
 /// and `session` (read-tracking) in place so the next request keeps full context.
-pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session, user: &str) {
+pub fn run(cfg: &Config, history: &mut Vec<Value>, session: &mut tools::Session, user: &str, schemas: &Value) {
     // Always pin the system prompt at the head of the conversation. llama-server
     // KV-caches the prompt prefix; prefix cache reuse is what makes turn 2+ instant.
     // If we only added SYSTEM on turn 1 (when history was empty), every later turn
@@ -221,10 +221,9 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
     // no_think prefills a `</think>` assistant turn — which is itself grammar-invalid,
     // so it can't combine with strict's grammar (and weak models don't reason anyway).
     let no_think = std::env::var_os("OPENHARN_NO_THINK").is_some() && !strict;
-    let schemas = active_schemas(&allowed);
 
     // YES/NO two-pass tool selection (NLT 2025): if enabled, run Pass 1 each turn
-    let mut effective_schemas = active_schemas(&allowed);
+    let mut effective_schemas = filter_schemas(schemas, &allowed);
     if yesno_mode {
         // Re-run Pass 1 each turn since relevant tools may change
         let selected = run_yesno_pass1(cfg, &effective_schemas, &client, &url, &cfg.api_key, user);
@@ -232,8 +231,15 @@ let strict = narrow || std::env::var_os("OPENHARN_STRICT_TOOLS").is_some();
             println!("[yesno] no tools selected — continuing without tools");
         } else {
             println!("[yesno] selected: {:?}", selected);
-            effective_schemas = active_schemas(&Some(selected));
+            effective_schemas = filter_schemas(schemas, &Some(selected));
         }
+    }
+
+    // No tools supplied (or none survived filtering) → chat only; the model can
+    // only answer in text. Dynamic schemas are the sole source of tools, so an
+    // empty schema set means there is nothing to call.
+    if effective_schemas.as_array().map_or(false, |a| a.is_empty()) {
+        no_tools = true;
     }
 
     // FRIENDLY_RESULTS: classify user intent before the tool loop
@@ -945,29 +951,21 @@ fn run_yesno_pass1(
 ) -> Vec<String> {
     let Some(arr) = schemas.as_array() else { return Vec::new() };
     let mut questions = String::new();
+    let mut selections_keys: Vec<String> = Vec::new();
     for (i, tool) in arr.iter().enumerate() {
         let name = tool["function"]["name"].as_str().unwrap_or("");
         let desc = tool["function"]["description"].as_str().unwrap_or("");
         questions.push_str(&format!("{}. {} — {}\n", i + 1, name, desc));
+        selections_keys.push(format!("    \"{}\": \"YES\"|\"NO\"", name));
     }
+    let selections_block = selections_keys.join(",\n");
     let prompt = format!(
         "User task: {}\n\nSelect tools needed. Reply with valid JSON only:\n{{
   \"selections\": {{
-    \"read\": \"YES\"|\"NO\",
-    \"write\": \"YES\"|\"NO\",
-    \"edit\": \"YES\"|\"NO\",
-    \"glob\": \"YES\"|\"NO\",
-    \"grep\": \"YES\"|\"NO\",
-    \"glob_system\": \"YES\"|\"NO\",
-    \"grep_system\": \"YES\"|\"NO\",
-    \"bash\": \"YES\"|\"NO\",
-    \"python\": \"YES\"|\"NO\",
-    \"webfetch\": \"YES\"|\"NO\",
-    \"todowrite\": \"YES\"|\"NO\",
-    \"todoread\": \"YES\"|\"NO\"
+{}
   }}
 }}",
-        user_task
+        user_task, selections_block
     );
 
     let request = json!({
@@ -1012,25 +1010,26 @@ fn run_yesno_pass1(
     selected
 }
 
-/// The tool schemas advertised for this run, optionally filtered to an allowed subset
-/// (`OPENHARN_TOOLS` / `OPENHARN_NARROW`). `None` = all ten tools.
-fn active_schemas(allowed: &Option<Vec<String>>) -> Value {
+/// Filter the caller-supplied (dynamic) tool schemas down to an allowed subset
+/// (`OPENHARN_TOOLS` / `OPENHARN_NARROW`). `None` = keep every supplied schema.
+/// This never invents schemas — the only source of tools is what the caller
+/// provided in the request body (or, in the REPL, via `OPENHARN_TOOLS_SCHEMA`).
+fn filter_schemas(schemas: &Value, allowed: &Option<Vec<String>>) -> Value {
+    let Some(arr) = schemas.as_array() else {
+        // Not an array (e.g. missing/null) → no tools available.
+        return Value::Array(vec![]);
+    };
     match allowed {
-        None => tools::schemas(),
+        None => Value::Array(arr.clone()),
         Some(names) => Value::Array(
-            tools::schemas()
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter(|t| {
-                            t["function"]["name"]
-                                .as_str()
-                                .is_some_and(|n| names.iter().any(|x| x == n))
-                        })
-                        .cloned()
-                        .collect()
+            arr.iter()
+                .filter(|t| {
+                    t["function"]["name"]
+                        .as_str()
+                        .is_some_and(|n| names.iter().any(|x| x == n))
                 })
-                .unwrap_or_default(),
+                .cloned()
+                .collect(),
         ),
     }
 }
@@ -1932,6 +1931,20 @@ fn harness_decompose(request: &str, tools: &Value) -> Vec<(String, String)> {
 mod tests {
     use super::*;
 
+    /// A small representative tool-set used by schema-filtering/prompt tests.
+    /// Replaces the old hardcoded `tools::schemas()` now that schemas are dynamic.
+    fn sample_schemas() -> Value {
+        json!([
+            {"type":"function","function":{"name":"read","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"}},"required":["path"]}}},
+            {"type":"function","function":{"name":"glob","description":"Glob","parameters":{"type":"object","properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["pattern"]}}},
+            {"type":"function","function":{"name":"grep","description":"Grep","parameters":{"type":"object","properties":{"pattern":{"type":"string"},"include":{"type":"string"}},"required":["pattern"]}}},
+            {"type":"function","function":{"name":"bash","description":"Bash","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}},
+            {"type":"function","function":{"name":"edit","description":"Edit","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
+            {"type":"function","function":{"name":"write","description":"Write","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
+            {"type":"function","function":{"name":"glob_system","description":"Glob system","parameters":{"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}}}
+        ])
+    }
+
     #[test]
     fn parses_granite_text_tool_call() {
         // Granite emits a valid call as text that the server leaves in `content`.
@@ -1965,7 +1978,7 @@ mod tests {
 
     #[test]
     fn active_schemas_filters_and_grammar_constrains() {
-        let s = active_schemas(&Some(vec!["glob".into()]));
+        let s = filter_schemas(&sample_schemas(), &Some(vec!["glob".into()]));
         assert_eq!(s.as_array().unwrap().len(), 1, "only glob kept");
         let g = tool_grammar(&s, "text");
         // the grammar names glob and its real args, and has a text escape hatch
@@ -1988,7 +2001,7 @@ mod tests {
                 "function":{"name":"grep","arguments":"{\"pattern\":\"Config\"}"}}]}),
             json!({"role":"tool","tool_call_id":"c0","content":"src/app.py:1: class Config"}),
         ];
-        let wire = flatten_for_prompt_tools(&hist, &tools::schemas(), None);
+        let wire = flatten_for_prompt_tools(&hist, &sample_schemas(), None);
         // system carries the tool descriptions + the call format
         assert!(wire[0]["content"].as_str().unwrap().contains("<tool_call>"));
         assert!(wire[0]["content"].as_str().unwrap().contains("grep"));
@@ -2010,7 +2023,7 @@ mod tests {
             json!({"role":"system","content":"SYS"}),
             json!({"role":"user","content":"find files"}),
         ];
-        let filtered = active_schemas(&Some(vec!["read".into(), "glob".into()]));
+        let filtered = filter_schemas(&sample_schemas(), &Some(vec!["read".into(), "glob".into()]));
         let wire = flatten_for_prompt_tools(&hist, &filtered, None);
         let sys = wire[0]["content"].as_str().unwrap();
         // read and glob must be present

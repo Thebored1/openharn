@@ -147,9 +147,11 @@ fn handle_chat(mut request: Request, cfg: Config, cwd: PathBuf) {
         return;
     }
 
-    // Run the agent loop for this request on a fresh session.
+    // Run the agent loop for this request on a fresh session. The tool schemas come
+    // entirely from the request body (`tools` field); openharn advertises whatever
+    // the caller supplied and dispatches calls by name — there are no hardcoded tools.
     let mut session = tools::Session::new(cwd.clone());
-    agent::run(&local_cfg, &mut history, &mut session, &user);
+    agent::run(&local_cfg, &mut history, &mut session, &user, &req["tools"]);
 
     // The agent pushes the final assistant message onto `history`. Find the last
     // assistant turn that actually carries text (tool-only turns have null content).
