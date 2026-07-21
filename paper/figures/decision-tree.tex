@@ -1,0 +1,38 @@
+\documentclass[border=5pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{trees,arrows.meta,positioning}
+
+\begin{document}
+\begin{tikzpicture}[
+  level 1/.style={sibling distance=7cm},
+  level 2/.style={sibling distance=3.5cm},
+  level 3/.style={sibling distance=2cm},
+  every node/.style={draw, rounded corners, align=center, font=\small, text width=3cm},
+  edge from parent/.style={draw, -{Stealth[length=3mm]}, thick},
+  decision/.style={draw, diamond, aspect=2.5, align=center, font=\small},
+  result/.style={draw, fill=blue!10, rounded corners, align=center, font=\small, text width=2.8cm},
+  bad/.style={draw, fill=red!10, rounded corners, align=center, font=\small, text width=2.8cm},
+]
+
+\node[decision] {Does the model emit\\native tool calls?}
+  child { node[decision] {Native FC\\degraded by quant?}
+    child { node[result] {tool\_choice=required\\+ enable\_thinking:false\\[2pt]\textbf{72.5\%}\\(MiniCPM-Q4)}
+      edge from parent node[left, draw=none, font=\scriptsize] {YES}
+    }
+    child { node[result] {Leave it alone\\(native FC is healthy)\\[2pt]\textbf{82.5\%}\\(MiniCPM-Q8)}
+      edge from parent node[right, draw=none, font=\scriptsize] {NO}
+    }
+    edge from parent node[left, draw=none, font=\scriptsize] {YES}
+  }
+  child { node[result] {prompt-tools + strict\\grammar + gate + abstain\\[2pt]\textbf{42\%}\\(LFM2-Q2)}
+    edge from parent node[right, draw=none, font=\scriptsize] {NO}
+  };
+
+\node[below=0.5cm of current bounding box.south, draw=none, font=\scriptsize, align=center, text width=8cm] {
+  All paths are model-agnostic. No fine-tuning. No training.\\
+  Env vars: OPENHARN\_PROMPT\_TOOLS, OPENHARN\_STRICT\_TOOLS,\\
+  OPENHARN\_TOOL\_CHOICE, OPENHARN\_TEMPLATE\_KWARGS.
+};
+
+\end{tikzpicture}
+\end{document}

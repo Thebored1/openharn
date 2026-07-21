@@ -1,0 +1,384 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{listings}
+
+\newcommand{\openharn}{\textsc{openharn}}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+\title{Inference-Time Recovery of Tool-Use Capability in Ultra Quantised Large Language Models}
+
+\author{
+\IEEEauthorblockN{Nitesh Sharma}
+\IEEEauthorblockA{Independent Study}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Small language models (SLMs) are attractive for private, low-cost, and CPU-oriented agent
+systems, but tool use fails for reasons that are not captured by ordinary language quality
+metrics. A model may select the wrong tool, emit an invalid call, fail to abstain, or produce
+one call when a task requires several. We study how much of this failure can be addressed by
+an inference-time harness rather than by changing model weights. We describe \openharn, a
+small model-agnostic harness with three execution modes: a conventional conversation-based
+loop, a grammar-constrained text-call mode, and a structured-action mode with externalized
+state and step verification. The harness also provides schema-derived grammars, grounded
+filesystem tools, bounded context, text-call recovery, and circuit breakers. On a reproducible
+200-example subset of BFCL v4, a 2-bit LFM2 model scores 47.5\% with raw native function
+A prompt-tools configuration initially scores 29.5\%, while the later per-request policy
+reaches 63.0\% on a full 200-example run; a subsequent decomposition fix reaches 64.5\%. On a
+separate MiniCPM-V quantization experiment, inference-time settings improve Q4 performance
+from 47.5\% to 72.5\% on a 40-example category. These results support a narrower claim than
+“the harness matters more than the model”: harnesses can recover mechanical reliability and
+change the tasks a small model can express, but tool selection, argument values, and task
+decomposition remain model-limited. We provide a failure taxonomy, limitations, and a
+pre-registered-style ablation plan for future evaluation.
+\end{abstract}
+
+\section{Introduction}
+
+Small language models are increasingly used on local and resource-constrained hardware.
+Their usefulness as agents, however, depends on more than generating plausible text. An agent
+must decide whether a tool applies, select the correct tool, emit a valid call, fill its
+arguments, execute the call, interpret the result, and stop at the right time. These
+requirements expose failure modes that can be hidden by ordinary text-generation scores.
+
+Quantization and model/server compatibility can make the problem worse. A model may know
+what operation is needed but fail to emit the format expected by the server. Conversely, a
+grammar can guarantee syntactic validity without making the model choose the right tool or
+argument values. Treating all failures as “function calling accuracy” obscures this
+boundary.
+
+This paper asks a focused question:
+\emph{which tool-use failures can be recovered by an inference-time harness, and which remain
+limitations of the model?} We study this question using a compact, CPU-oriented implementation
+rather than a new trained model. The harness is designed for small models and exposes the
+protocol and execution decisions explicitly enough to inspect them.
+
+Our contributions are:
+\begin{enumerate}
+\item A systems design for small-model tool use that separates caller-supplied tool schemas
+from built-in handlers and supports native calls, prompt-described grammar-constrained calls,
+and structured JSON actions.
+\item A reliability ladder that combines grounding, schema-derived grammars, text-call
+recovery, relevance/abstention handling, bounded context, and circuit breakers. These
+mechanisms address different failure classes rather than acting as a universal configuration.
+\item An empirical failure taxonomy distinguishing protocol/mechanical failures from
+semantic judgment failures, together with measurements on BFCL v4 and a quantization-focused
+MiniCPM-V experiment.
+\item A conservative account of what the current evidence establishes, plus a controlled
+ablation and held-out evaluation protocol needed to test generality beyond the present runs.
+\end{enumerate}
+
+\section{Scope and Research Questions}
+
+We study inference-time interventions only: no fine-tuning, distillation, preference
+optimization, or model-specific weight changes. The main questions are:
+
+\begin{description}
+\item[RQ1:] Can a harness improve valid tool-call generation for a quantized SLM?
+\item[RQ2:] Which interventions help single calls, parallel calls, and abstention, and do
+those interventions trade off against one another?
+\item[RQ3:] Does a compact structured-action loop provide a more reliable alternative when a
+model cannot use native function calling?
+\item[RQ4:] Which failures remain after syntax and protocol constraints are applied?
+\end{description}
+
+The current experiments answer RQ1 and partially answer RQ2 and RQ4. RQ3 is implemented in
+the artifact but requires the proposed controlled comparison before quantitative conclusions
+can be made.
+
+\section{Related Work}
+
+The SLM position paper argues that small models can become useful agents when paired with a
+good harness~\cite{belcak2025slm}. Our work tests this claim at the tool-call boundary and
+qualifies it: a harness can improve form and execution discipline, while semantic judgment
+still depends heavily on the model.
+
+ReAct-style agents maintain a conversational trajectory of thoughts, actions, and
+observations. \openharn's default loop follows this pattern, while its structured mode
+externalizes durable state and exposes only a small valid action set. This design is related
+to the harness requirements described by Ranjan and Talluri~\cite{ranjan2026slm}, but our
+current study does not claim to reproduce their trained specialist model or their end-to-end
+results.
+
+BFCL v4 provides AST-based function-calling evaluation without executing arbitrary tools
+\cite{patil2025bfcl}. We use its single-turn categories because they isolate call structure,
+argument values, parallelism, and abstention. Natural Language Tools~\cite{johnson2025nlt}
+and grammar-constrained decoding motivate our prompt-tools, YES/NO selection, and schema
+constraint modes. These mechanisms are established individually; our contribution is their
+small-model-oriented integration and failure analysis, not the invention of grammar
+constraints or tool selection.
+
+\section{Harness Design}
+
+\subsection{Schema and Handler Separation}
+
+Tool schemas are not embedded in the binary. In REPL mode, the caller supplies an OpenAI-style
+\texttt{tools} array through \texttt{OPENHARN\_TOOLS\_SCHEMA}; in server mode, schemas arrive
+in each request. The harness filters the supplied schemas and derives its prompt and grammar
+from them. Execution is separate: a requested function name is dispatched to a built-in Rust
+handler. A schema for an unknown name therefore produces an error rather than silently
+executing arbitrary code.
+
+The current implementation includes handlers for file reading and writing, anchored editing,
+project and system search, shell/Python execution, web fetching, and todo state. Existing
+files must be read in the current session before editing or overwriting. This grounding rule
+is an execution guard, not a claim that the model understood the whole file.
+
+\subsection{Default Conversational Loop}
+
+The default loop maintains a system prompt, user turns, assistant tool calls, and tool
+results. It sends this history to an OpenAI-compatible endpoint, executes accepted calls, and
+continues until a text response is produced. The history is trimmed by dropping oldest whole
+turns, preserving the system message and recent tool context. Tool results are capped to
+prevent one search from consuming the context.
+
+The loop has operational safeguards: per-turn and total call limits, exact-repeat detection,
+connection retries, and recovery for structured calls that a server returned as text. Recovery
+handles formats such as \texttt{<tool\_call>[...]}; it does not convert arbitrary Markdown
+shell fences into tool calls.
+
+\subsection{Grammar-Constrained Text Mode}
+
+Some model/server combinations do not reliably use the native tool API. With
+\texttt{OPENHARN\_PROMPT\_TOOLS=1}, tools are described in the system prompt and the native
+\texttt{tools} field is omitted. With \texttt{OPENHARN\_STRICT\_TOOLS=1}, a GBNF grammar
+restricts output to a schema-valid text call or ordinary text. The grammar is generated from
+the caller's schemas, so it constrains function names, argument keys, and value types without
+hardcoding a tool inventory.
+
+A key implementation lesson was bounded whitespace. An unbounded grammar rule allowed a
+model to emit a valid first call followed by whitespace until the token limit, leaving no
+closing array delimiter. The parser then discarded an otherwise useful call. Bounding this
+rule and adding incomplete-array recovery improved the measured BFCL configuration, but the
+intervention is protocol-specific and should not be treated as a universal model improvement.
+
+\subsection{Structured SLM Mode}
+
+With \texttt{OPENHARN\_SLM=1}, the model does not receive the complete conversational
+transcript. It receives a compact JSON observation containing the goal, step budget, valid
+actions, discovered files, previous reads, the last result, and any validation feedback. The
+action space is deliberately small:
+\begin{itemize}
+\item \texttt{SEARCH}: search for candidate files;
+\item \texttt{READ}: inspect a discovered file;
+\item \texttt{ANSWER}: respond after at least one read;
+\item \texttt{ESCALATE}: terminate when the task cannot be completed safely.
+\end{itemize}
+
+Actions are validated before execution, results are checked afterward, and a failed step is
+retried with localized feedback rather than restarting the entire task. This mode tests a
+different hypothesis from grammar-constrained tool calling: reducing state and action
+complexity may be more useful than teaching a weak model a larger function-call protocol.
+
+\section{Evaluation Protocol}
+
+\subsection{Current Evaluation}
+
+The primary reported benchmark is a fixed 200-example subset of BFCL v4: 40 examples each
+from \texttt{simple\_python}, \texttt{multiple}, \texttt{parallel},
+\texttt{parallel\_multiple}, and \texttt{irrelevance}. These are subset results, not BFCL
+leaderboard scores. The main model is LFM2-8B-A1B-UD-Q2\_K\_XL, a 2-bit quantization with
+approximately 1B active MoE parameters. Runs used llama-server on CPU with a 16K context and
+12 threads. The BFCL notes report build and temperature details; run-to-run variation is
+material, particularly for parallel categories.
+
+A secondary experiment uses MiniCPM-V-4.6 on a 40-example \texttt{parallel\_multiple}
+category at Q8 and Q4. It tests whether native template controls can recover quantization
+degradation without changing weights.
+
+\subsection{Fairness and Reproducibility Requirements}
+
+The reported configurations were developed iteratively, so they should not be interpreted as
+an unbiased model-selection result. In a follow-up evaluation, all models and configurations
+should be frozen before scoring held-out examples. Each run should report the exact model
+file, server build, prompt, schema, context size, temperature, token limits, number of
+parallel slots, and environment variables. Results should include repeated seeds or repeated
+runs with confidence intervals.
+
+\section{Results}
+
+\subsection{BFCL Results}
+
+Table~\ref{tab:bfcl} summarizes the results documented in the BFCL research notes. The raw
+native-function-calling result is the baseline. Prompt-tools plus strict grammar is not
+automatically better: the initial configuration scored lower because the model's native
+training and the text protocol competed. The later per-request policy, including message
+flattening and native-empty fallback, produced 63.0\% on the full 200-example run. A
+subsequent decomposition fix produced 64.5\%; we use 63.0\% as the primary result because it
+is the stable run discussed in the research notes.
+
+\begin{table}[t]
+\centering
+\caption{BFCL v4 results on the fixed 200-example subset. Values are percentages. The primary policy result is Run D; Run E reached 64.5\% after an additional decomposition fix.}
+\label{tab:bfcl}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lrrrrrr}
+\toprule
+Configuration & Simple & Multiple & Parallel & Parallel-M & Irrel. & Overall\\
+\midrule
+Raw native FC & 80.0 & 82.5 & 0.0 & 0.0 & 75.0 & 47.5\\
+Prompt + strict & 35.0 & 10.0 & 5.0 & 5.0 & 92.5 & 29.5\\
++ abstain + gate & 60.0 & 45.0 & 2.5 & 25.0 & 87.5 & 44.0\\
+Per-request policy (Run D) & 75.0 & 77.5 & 52.5 & 42.5 & 67.5 & 63.0\\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+The main pattern is more informative than the aggregate score. Native calling is competitive
+for ordinary single calls but produces no correct parallel calls for this model and setup. The
+text grammar expresses arrays of calls and improves parallel categories, while the relevance
+gate improves abstention. The same strict prompt-tools configuration can damage models whose
+native function-calling path is healthy; measurements in the project notes show strong native
+models falling to zero on the tested parallel-multiple setup under the incompatible strict
+configuration. Thus the result supports per-model or per-request adaptation, not one
+universal flag set.
+
+\subsection{Quantization Experiment}
+
+Table~\ref{tab:quant} reports the separate MiniCPM-V experiment. The Q4 model's score rises
+from 47.5\% with automatic native tool choice to 72.5\% when tool choice is required and
+thinking is disabled. The result is encouraging but narrow: it is one model family, one
+category, and a small evaluation slice. It demonstrates that inference controls can matter
+substantially; it does not establish that quantization primarily damages format rather than
+other capabilities.
+
+\begin{table}[h]
+\centering
+\caption{MiniCPM-V-4.6 quantization experiment on 40 parallel-multiple examples.}
+\label{tab:quant}
+\begin{tabular}{lrrr}
+\toprule
+Configuration & Accuracy & Repeated values & Latency\\
+\midrule
+Q8 native, automatic & 82.5\% & 77.5/85/85 & baseline\\
+Q4 native, automatic & 47.5\% & 45/50/47.5 & --\\
+Q4 required + no-think & 72.5\% & 72.5/72.5/72.5 & ${\sim}4\times$ faster\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{What the Current Results Do Not Establish}
+
+The present experiments do not establish a universal improvement, a causal ranking of every
+harness component, or superiority over trained specialist agents. The 200-example BFCL slice
+was selected for practical feasibility, and some configurations were tuned against related
+behavioral cases. The results should therefore be read as evidence for specific mechanisms
+and failure modes, not as a leaderboard claim.
+
+\section{Failure Taxonomy}
+
+We classify failures by the layer at which they occur:
+
+\begin{itemize}
+\item \textbf{Protocol failure.} The model emits a format the server cannot parse, or the
+grammar/parser loses a call through truncation or runaway whitespace. Bounded grammar and
+recovery can help.
+\item \textbf{Selection or abstention failure.} The model calls a tool when none applies, or a
+relevance gate says no when a tool is needed. A gate can improve abstention but introduces
+false negatives.
+\item \textbf{Argument failure.} The model selects a plausible function but supplies a wrong
+value, type, enum, or nested argument. A grammar can enforce types, not facts.
+\item \textbf{Planning failure.} The model selects the wrong number of calls, under-decomposes a
+parallel task, duplicates calls, or stops at the wrong time. This remains primarily model
+judgment, although prompts and structured state can change the interface.
+\end{itemize}
+
+This taxonomy prevents a common overclaim. Valid JSON is not equivalent to correct tool use,
+and a higher tool-call score does not necessarily imply better end-to-end coding behavior.
+The appropriate metrics should report syntax validity, tool selection, argument accuracy,
+call-count accuracy, abstention, execution success, and final task success separately.
+
+\section{Proposed Controlled Study}
+
+The current artifact makes a broader study possible, but that study has not been run at the
+time of writing. We propose the following preregistered-style comparison:
+
+\begin{enumerate}
+\item Freeze prompts, schemas, decoding parameters, and model/server versions.
+\item Evaluate at least three model families and at least two sizes or quantizations per
+family, including a model with healthy native function calling and one that requires text or
+structured actions.
+\item Compare: raw native calling; basic conversational loop; loop plus grounding; loop plus
+context limits; prompt-tools; strict grammar; tool filtering; relevance/abstention; and the
+structured SLM mode.
+\item Use development tasks only for configuration selection and a held-out task set for the
+reported comparison. Include both the BFCL subset and real coding/navigation tasks.
+\item Repeat each condition sufficiently to report confidence intervals, especially for
+parallel categories. Report latency, generated tokens, tool-call count, invalid-call rate,
+hallucinated-result rate, and task success in addition to aggregate accuracy.
+\item Test each intervention independently and in combinations so that a gain can be
+attributed to a mechanism rather than to an opaque configuration.
+\end{enumerate}
+
+This study would directly test whether the structured SLM mode improves reliability because of
+its smaller observation/action space, or merely because it changes the benchmark interface.
+It would also reveal whether the observed harness effects transfer across models.
+
+\section{Discussion}
+
+The evidence supports a qualified systems conclusion. Harnesses can recover mechanical
+reliability: they can constrain syntax, prevent unsafe edits, express multiple calls, repair
+some truncation, and supply an explicit abstention mechanism. They cannot reliably provide
+missing semantic knowledge, correct argument values, tool competence, or robust decomposition.
+
+The best configuration is therefore conditional. A model with healthy native function calling
+should not automatically be forced through prompt-tools and strict grammar. A weak model that
+cannot emit native calls may benefit from a narrow schema, prompt descriptions, and grammar
+constraints. A model that can emit compact JSON but not tool calls may be a candidate for the
+structured SLM mode. The practical design principle is a reliability ladder: add constraints
+only when measurements show that the corresponding failure exists.
+
+The CPU results also expose a deployment tradeoff. Reasoning tokens can dominate wall-clock
+latency, especially on local hardware. Disabling thinking can improve throughput, but it may
+change planning quality; the speed/accuracy tradeoff must be reported rather than assumed.
+
+\subsection{Limitations and Threats to Validity}
+
+\begin{itemize}
+\item The primary BFCL result is a fixed 200-example subset, not the full leaderboard.
+\item The main BFCL model is one LFM2 quantization and the secondary experiment is one
+MiniCPM-V family; broad transfer is untested.
+\item Some configurations were developed iteratively against related tests, creating a risk
+of benchmark overfitting.
+\item The measurements depend on llama-server chat templates, grammar behavior, and build
+versions. Another server may produce different results.
+\item BFCL single-turn AST accuracy is not end-to-end coding success and does not evaluate
+filesystem safety, multi-turn state, or final answer quality.
+\item The structured SLM implementation is quantitative evidence only after a direct controlled
+comparison; its current inclusion is a design contribution and testable hypothesis.
+\item The artifact contains powerful local handlers such as shell and Python execution. The
+research evaluation assumes a trusted local environment and does not claim sandbox security.
+\end{itemize}
+
+\section{Conclusion}
+
+We presented a small-model-oriented tool-use harness and a framework for analyzing where it
+helps. Existing measurements show that schema-derived grammar, abstention handling, bounded
+output, and inference controls can substantially change tool-call reliability without training.
+They also show that a prompt-tools configuration can hurt a model whose native interface is
+already working, and that semantic judgment remains a bottleneck after syntax is fixed.
+
+The defensible conclusion is not that a harness is universally more important than a model.
+It is that harness design is a major, measurable part of small-model agent capability. A good
+harness can recover form and execution discipline; the model still determines much of the
+judgment. The next step is the controlled, held-out, multi-model ablation described above.
+
+\section*{Acknowledgments}
+
+BFCL v4 datasets and evaluation code are from the Gorilla project. We thank the llama.cpp
+community for the OpenAI-compatible inference interface used in the experiments. The reported
+runs were conducted on consumer CPU-oriented hardware.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
