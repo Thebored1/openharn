@@ -10,7 +10,7 @@
 \newcommand{\openharn}{\textsc{openharn}}
 \newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
 
-\title{Inference-Time Recovery of Tool-Use Capability in Ultra Quantised Large Language Models}
+\title{Constraining the Loop: Inference-Time Tool Use for Quantized Small Language Models}
 
 \author{
 \IEEEauthorblockN{Nitesh Sharma}
@@ -31,8 +31,9 @@ loop, a grammar-constrained text-call mode, and a structured-action mode with ex
 state and step verification. The harness also provides schema-derived grammars, grounded
 filesystem tools, bounded context, text-call recovery, and circuit breakers. On a reproducible
 200-example subset of BFCL v4, a 2-bit LFM2 model scores 47.5\% with raw native function
-A prompt-tools configuration initially scores 29.5\%, while the later per-request policy
-reaches 63.0\% on a full 200-example run; a subsequent decomposition fix reaches 64.5\%. On a
+calling. A prompt-tools configuration initially scores 29.5\%, while the later per-request
+policy reaches 63.0\% on the primary full-200 run. A subsequent decomposition fix reaches
+64.5\% in a later run. On a
 separate MiniCPM-V quantization experiment, inference-time settings improve Q4 performance
 from 47.5\% to 72.5\% on a 40-example category. These results support a narrower claim than
 “the harness matters more than the model”: harnesses can recover mechanical reliability and
@@ -90,9 +91,10 @@ model cannot use native function calling?
 \item[RQ4:] Which failures remain after syntax and protocol constraints are applied?
 \end{description}
 
-The current experiments answer RQ1 and partially answer RQ2 and RQ4. RQ3 is implemented in
-the artifact but requires the proposed controlled comparison before quantitative conclusions
-can be made.
+The current experiments answer RQ1 and partially answer RQ2 and RQ4. RQ3 is a design
+contribution and testable hypothesis: the structured SLM mode is implemented in the artifact,
+but it has not been quantitatively compared with the other modes, so this paper makes no
+performance claim for it.
 
 \section{Related Work}
 
@@ -295,7 +297,7 @@ Configuration & Accuracy & Repeated values & Latency\\
 \midrule
 Q8 native, automatic & 82.5\% & 77.5/85/85 & baseline\\
 Q4 native, automatic & 47.5\% & 45/50/47.5 & --\\
-Q4 required + no-think & 72.5\% & 72.5/72.5/72.5 & ${\sim}4\times$ faster\\
+Q4 required + no-think & 72.5\% & 72.5/72.5/72.5 & not measured\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -373,8 +375,10 @@ structured SLM mode. The practical design principle is a reliability ladder: add
 only when measurements show that the corresponding failure exists.
 
 The CPU results also expose a deployment tradeoff. Reasoning tokens can dominate wall-clock
-latency, especially on local hardware. Disabling thinking can improve throughput, but it may
-change planning quality; the speed/accuracy tradeoff must be reported rather than assumed.
+latency, especially on local hardware. Although the project notes suggest that disabling
+thinking can improve throughput, exact latency values were not retained for the MiniCPM-V
+tabled runs, so we do not claim a measured speedup here. Future runs should report the
+speed/accuracy tradeoff directly.
 
 \subsection{Limitations and Threats to Validity}
 
@@ -409,9 +413,9 @@ judgment. The next step is the controlled, held-out, multi-model ablation descri
 
 \section*{Acknowledgments}
 
-BFCL v4 datasets and evaluation code are from the Gorilla project. We thank the llama.cpp
-community for the OpenAI-compatible inference interface used in the experiments. The reported
-runs were conducted on consumer CPU-oriented hardware.
+We thank the BFCL team and the Gorilla project for the BFCL v4 datasets and evaluation code,
+and the llama.cpp community for the OpenAI-compatible inference interface used in the
+experiments. The reported runs were conducted on consumer CPU-oriented hardware.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
