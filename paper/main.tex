@@ -35,11 +35,11 @@ calling. A prompt-tools configuration initially scores 29.5\%, while the later p
 policy reaches 63.0\% on the primary full-200 run. A subsequent decomposition fix reaches
 64.5\% in a later run. On a
 separate MiniCPM-V quantization experiment, inference-time settings improve Q4 performance
-from 47.5\% to 72.5\% on a 40-example category. These results support a narrower claim than
-“the harness matters more than the model”: harnesses can recover mechanical reliability and
-change the tasks a small model can express, but tool selection, argument values, and task
-decomposition remain model-limited. We provide a failure taxonomy, limitations, and a
-pre-registered-style ablation plan for future evaluation.
+from 47.5\% to 72.5\% on a 40-example category. These results support a conditional claim:
+harnesses can recover mechanical reliability and unlock some latent composition capability when
+the presentation matches the model's pretraining distribution, but they cannot supply missing
+semantic knowledge or dependent multi-step planning. We provide a failure taxonomy and clearly
+separate completed measurements from future evaluation.
 \end{abstract}
 
 \section{Introduction}
@@ -165,11 +165,12 @@ restricts output to a schema-valid text call or ordinary text. The grammar is ge
 the caller's schemas, so it constrains function names, argument keys, and value types without
 hardcoding a tool inventory.
 
-A key implementation lesson was bounded whitespace. An unbounded grammar rule allowed a
-model to emit a valid first call followed by whitespace until the token limit, leaving no
-closing array delimiter. The parser then discarded an otherwise useful call. Bounding this
-rule and adding incomplete-array recovery improved the measured BFCL configuration, but the
-intervention is protocol-specific and should not be treated as a universal model improvement.
+\textbf{Key systems finding: bounded whitespace.} An unbounded grammar rule allowed a model
+to emit a valid first call followed by whitespace until the token limit, leaving no closing
+array delimiter. The parser then discarded an otherwise useful call. Bounding this one grammar
+rule, together with incomplete-array recovery, produced an approximately 13-point swing in the
+measured configuration (about 44\% to 57\%). The intervention is protocol-specific and should
+not be treated as a universal model improvement.
 
 \subsection{Structured SLM Mode}
 
@@ -209,11 +210,14 @@ degradation without changing weights.
 
 \subsection{Definition of the Per-Request Policy}
 
-The term ``per-request policy'' refers to the category-aware policy implemented by
-\texttt{derive\_policy}; it is not a logit router or a learned model. For each request, the
-harness reads the user text and supplied tool schemas, uses the rule-based
-\texttt{harness\_decompose} routine to estimate the number of requested operations, and
-selects a generation path:
+The term ``per-request policy'' refers to a small set of hand-written heuristics implemented
+by \texttt{derive\_policy}; it is not a logit router or a learned model. The heuristics inspect
+the user text and supplied tool schemas. If the tool list and query indicate one function and
+one imperative, the policy prefers native function calling. If the query contains conjunctions
+such as ``and'', ``plus'', or ``then'', or contains multiple requested quantities, it treats the
+request as multi-call and enables planning. If no schema field matches the query subject, it
+uses abstention. In code, \texttt{harness\_decompose} estimates the number of requested
+operations and selects a generation path:
 \begin{itemize}
 \item For a likely single-call request, it prefers native function calling and does not force
 prompt-tools or a call-count hint.
@@ -261,7 +265,7 @@ is the stable run discussed in the research notes.
 
 \begin{table}[t]
 \centering
-\caption{BFCL v4 results on the fixed 200-example subset. Values are percentages. The primary policy result is Run D; Run E reached 64.5\% after an additional decomposition fix.}
+\caption{BFCL v4 results on the fixed 200-example subset. Values are percentages. Run D is the per-request policy plus BFCL message flattening and native-empty fallback; Run E reached 64.5\% after an additional decomposition fix.}
 \label{tab:bfcl}
 \resizebox{\columnwidth}{!}{%
 \begin{tabular}{lrrrrrr}
@@ -279,8 +283,8 @@ Per-request policy (Run D) & 75.0 & 77.5 & 52.5 & 42.5 & 67.5 & 63.0\\
 
 The main pattern is more informative than the aggregate score. Native calling is competitive
 for ordinary single calls but produces no correct parallel calls for this model and setup. The
-text grammar expresses arrays of calls and improves parallel categories, while the relevance
-gate improves abstention. The same strict prompt-tools configuration can damage models whose
+native-template and plan-first paths improve some multi-call cases by giving the model a planning
+phase before enforcing an array, while the relevance gate improves abstention. The same strict prompt-tools configuration can damage models whose
 native function-calling path is healthy; measurements in the project notes show strong native
 models falling to zero on the tested parallel-multiple setup under the incompatible strict
 configuration. Thus the result supports per-model or per-request adaptation, not one
@@ -288,7 +292,9 @@ universal flag set.
 
 \subsection{Quantization Experiment}
 
-Table~\ref{tab:quant} reports the separate MiniCPM-V experiment. The Q4 model's score rises
+As a cross-model check, we tested whether inference controls can recover quantization
+degradation on a different model family, MiniCPM-V. Table~\ref{tab:quant} reports the separate
+experiment. The Q4 model's score rises
 from 47.5\% with automatic native tool choice to 72.5\% when tool choice is required and
 thinking is disabled. The result is encouraging but narrow: it is one model family, one
 category, and a small evaluation slice. It demonstrates that inference controls can matter
@@ -299,13 +305,13 @@ other capabilities.
 \centering
 \caption{MiniCPM-V-4.6 quantization experiment on 40 parallel-multiple examples.}
 \label{tab:quant}
-\begin{tabular}{lrrr}
+\begin{tabular}{lrr}
 \toprule
-Configuration & Accuracy & Repeated values & Latency\\
+Configuration & Accuracy & Repeated values\\
 \midrule
-Q8 native, automatic & 82.5\% & 77.5/85/85 & baseline\\
-Q4 native, automatic & 47.5\% & 45/50/47.5 & --\\
-Q4 required + no-think & 72.5\% & 72.5/72.5/72.5 & not measured\\
+Q8 native, automatic & 82.5\% & 77.5/85/85\\
+Q4 native, automatic & 47.5\% & 45/50/47.5\\
+Q4 required + no-think & 72.5\% & 72.5/72.5/72.5\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -324,8 +330,10 @@ We classify failures by the layer at which they occur:
 
 \begin{itemize}
 \item \textbf{Protocol failure.} The model emits a format the server cannot parse, or the
-grammar/parser loses a call through truncation or runaway whitespace. Bounded grammar and
-recovery can help.
+grammar/parser loses a call through truncation or runaway whitespace. \textbf{The bounded-
+whitespace grammar fix is a concrete systems result: replacing an unbounded whitespace rule
+with a one-space bound prevented runaway output and produced an approximately 13-point swing
+between the affected BFCL configurations.} Recovery can help.
 \item \textbf{Selection or abstention failure.} The model calls a tool when none applies, or a
 relevance gate says no when a tool is needed. A gate can improve abstention but introduces
 false negatives.
