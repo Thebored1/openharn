@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use openharn in research, please cite it as below."
 authors:
-  - family-names: "Paper"
-    given-names: "Author"
+  - family-names: "Sharma"
+    given-names: "Nitesh"
 title: "openharn: A Tiny, Local-First Coding Agent for Small Language Models"
 version: 0.1.0
 doi: ""
@@ -12,8 +12,8 @@ license: "MIT"
 preferred-citation:
   type: "software"
   authors:
-    - family-names: "Paper"
-      given-names: "Author"
+    - family-names: "Sharma"
+      given-names: "Nitesh"
   title: "openharn: A Tiny, Local-First Coding Agent for Small Language Models"
   year: 2026
   url: "https://github.com/Thebored1/openharn"
