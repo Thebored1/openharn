@@ -14,7 +14,7 @@
 
 \author{
 \IEEEauthorblockN{Nitesh Sharma}
-\IEEEauthorblockA{Independent Study}
+\IEEEauthorblockA{Independent Researcher}
 }
 
 \begin{document}
@@ -184,8 +184,10 @@ complexity may be more useful than teaching a weak model a larger function-call 
 
 The primary reported benchmark is a fixed 200-example subset of BFCL v4: 40 examples each
 from \texttt{simple\_python}, \texttt{multiple}, \texttt{parallel},
-\texttt{parallel\_multiple}, and \texttt{irrelevance}. These are subset results, not BFCL
-leaderboard scores. The main model is LFM2-8B-A1B-UD-Q2\_K\_XL, a 2-bit quantization with
+\texttt{parallel\_multiple}, and \texttt{irrelevance}. We used this subset because full BFCL
+runs were impractical during CPU-only iteration: each condition required local inference and
+external AST evaluation, and the parallel categories were especially expensive to repeat.
+These are subset results, not BFCL leaderboard scores. The main model is LFM2-8B-A1B-UD-Q2\_K\_XL, a 2-bit quantization with
 approximately 1B active MoE parameters. Runs used llama-server on CPU with a 16K context and
 12 threads. The BFCL notes report build and temperature details; run-to-run variation is
 material, particularly for parallel categories.
@@ -194,11 +196,43 @@ A secondary experiment uses MiniCPM-V-4.6 on a 40-example \texttt{parallel\_mult
 category at Q8 and Q4. It tests whether native template controls can recover quantization
 degradation without changing weights.
 
+\subsection{Definition of the Per-Request Policy}
+
+The term ``per-request policy'' refers to the category-aware policy implemented by
+\texttt{derive\_policy}; it is not a logit router or a learned model. For each request, the
+harness reads the user text and supplied tool schemas, uses the rule-based
+\texttt{harness\_decompose} routine to estimate the number of requested operations, and
+selects a generation path:
+\begin{itemize}
+\item For a likely single-call request, it prefers native function calling and does not force
+prompt-tools or a call-count hint.
+\item For a likely multi-call request, it tries the model's native template with a think-then-
+call phase, then a plan-first prompt that enumerates operations before emitting a call array,
+and finally strict prompt-tools with an optional count hint.
+\item For an irrelevant request, or when the decomposition finds no matching tool, it uses the
+relevance/abstention path and can return \texttt{NO\_TOOL} without another model call.
+\end{itemize}
+
+Run D is this policy plus two proxy fixes: flattening BFCL's double-nested message structure
+before sending it to llama-server, and retrying with flattened prompt-tools plus strict grammar
+when native function calling returns no call. Run D therefore corresponds to the
+``per-request policy'' row in Table~\ref{tab:bfcl}; it does not mean that every request was
+forced through the same H2, deduplication, or prompt-tools pipeline.
+
+Run E adds the decomposition correction and fast path that were not present in Run D. The
+original decomposition code expected OpenAI-wrapped tool objects, whereas BFCL supplied flat
+objects; consequently it silently estimated zero matching tools. The fix accepts the flat
+schema, makes the no-match path abstain immediately, and simplifies the relevance-gate prompt
+with a ``when in doubt, say no'' instruction. This is the decomposition fix behind the 64.5\%
+run. Incomplete-array recovery and bounded-whitespace grammar are shared parser/grammar
+components, but they are not what distinguishes Run E from Run D.
+
 \subsection{Fairness and Reproducibility Requirements}
 
 The reported configurations were developed iteratively, so they should not be interpreted as
-an unbiased model-selection result. In a follow-up evaluation, all models and configurations
-should be frozen before scoring held-out examples. Each run should report the exact model
+an unbiased model-selection result. The controlled comparison in Section~\ref{sec:controlled}
+is a proposed follow-up study, not an experiment completed in this paper. In that study, all
+models and configurations should be frozen before scoring held-out examples. Each run should report the exact model
 file, server build, prompt, schema, context size, temperature, token limits, number of
 parallel slots, and environment variables. Results should include repeated seeds or repeated
 runs with confidence intervals.
@@ -297,10 +331,11 @@ and a higher tool-call score does not necessarily imply better end-to-end coding
 The appropriate metrics should report syntax validity, tool selection, argument accuracy,
 call-count accuracy, abstention, execution success, and final task success separately.
 
-\section{Proposed Controlled Study}
+\section{Proposed Controlled Study}\label{sec:controlled}
 
 The current artifact makes a broader study possible, but that study has not been run at the
-time of writing. We propose the following preregistered-style comparison:
+time of writing and its results must not be read as part of the reported evaluation. We propose
+the following preregistered-style comparison:
 
 \begin{enumerate}
 \item Freeze prompts, schemas, decoding parameters, and model/server versions.
