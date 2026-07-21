@@ -1,6 +1,6 @@
 [package]
 name = "openharn"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 # Standalone project — deliberately tiny dependency surface. The whole harness is

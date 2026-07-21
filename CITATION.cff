@@ -4,9 +4,9 @@ authors:
   - family-names: "Sharma"
     given-names: "Nitesh"
 title: "openharn: A Tiny, Local-First Coding Agent for Small Language Models"
-version: 0.1.0
+version: 0.1.1
 doi: ""
-date-released: 2026-07-13
+date-released: 2026-07-21
 url: "https://github.com/Thebored1/openharn"
 license: "MIT"
 preferred-citation:

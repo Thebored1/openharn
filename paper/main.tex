@@ -38,8 +38,10 @@ separate MiniCPM-V quantization experiment, inference-time settings improve Q4 p
 from 47.5\% to 72.5\% on a 40-example category. These results support a conditional claim:
 harnesses can recover mechanical reliability and unlock some latent composition capability when
 the presentation matches the model's pretraining distribution, but they cannot supply missing
-semantic knowledge or dependent multi-step planning. We provide a failure taxonomy and clearly
-separate completed measurements from future evaluation.
+semantic knowledge or guarantee correct dependent multi-step planning. Planning can improve in
+some cases when the presentation and generation path match the model, but residual decomposition
+errors remain. We provide a failure taxonomy and clearly separate completed measurements from
+future evaluation.
 \end{abstract}
 
 \section{Introduction}
@@ -62,7 +64,7 @@ boundary.
 This paper asks a focused question:
 \emph{which tool-use failures can be recovered by an inference-time harness, and which remain
 limitations of the model?} We study this question using a compact, CPU-oriented implementation
-rather than a new trained model. The harness is designed for small models and exposes the
+rather than a new trained model~\cite{openharn2026}. The harness is designed for small models and exposes the
 protocol and execution decisions explicitly enough to inspect them.
 
 Our contributions are:
@@ -205,8 +207,9 @@ approximately 1B active MoE parameters. Runs used llama-server on CPU with a 16K
 material, particularly for parallel categories.
 
 A secondary experiment uses MiniCPM-V-4.6 on a 40-example \texttt{parallel\_multiple}
-category at Q8 and Q4. It tests whether native template controls can recover quantization
-degradation without changing weights.
+category at Q8 and Q4. It tests whether native server-side inference controls---
+\texttt{tool\_choice=required} and \texttt{enable\_thinking:false} through the chat-template
+options---can recover quantization degradation without changing weights.
 
 \subsection{Definition of the Per-Request Policy}
 
@@ -293,8 +296,10 @@ universal flag set.
 \subsection{Quantization Experiment}
 
 As a cross-model check, we tested whether inference controls can recover quantization
-degradation on a different model family, MiniCPM-V. Table~\ref{tab:quant} reports the separate
-experiment. The Q4 model's score rises
+degradation on a different model family, MiniCPM-V. The custom native-template plus foreign
+array-grammar path was tested but underperformed; the reported intervention is the native
+server path with \texttt{tool\_choice=required} and thinking disabled. Table~\ref{tab:quant}
+reports the separate experiment. The Q4 model's score rises
 from 47.5\% with automatic native tool choice to 72.5\% when tool choice is required and
 thinking is disabled. The result is encouraging but narrow: it is one model family, one
 category, and a small evaluation slice. It demonstrates that inference controls can matter
