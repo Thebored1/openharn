@@ -10,7 +10,7 @@
 \newcommand{\openharn}{\textsc{openharn}}
 \newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
 
-\title{Constraining the Loop: Inference-Time Tool Use for Quantized Small Language Models}
+\title{Inference-Time Recovery of Tool-Use Capability in Low-Bit Quantised Large Language Models}
 
 \author{
 \IEEEauthorblockN{Nitesh Sharma}
@@ -50,8 +50,11 @@ must decide whether a tool applies, select the correct tool, emit a valid call, 
 arguments, execute the call, interpret the result, and stop at the right time. These
 requirements expose failure modes that can be hidden by ordinary text-generation scores.
 
-Quantization and model/server compatibility can make the problem worse. A model may know
-what operation is needed but fail to emit the format expected by the server. Conversely, a
+Quantization and model/server compatibility can make the problem worse. Post-training
+quantization methods such as GPTQ~\cite{frantar2023gptq} and AWQ~\cite{lin2024awq} reduce
+memory and inference cost, but low-bit deployment can expose failures in structured output
+behavior. A model may know what operation is needed but fail to emit the format expected by
+the server. Conversely, a
 grammar can guarantee syntactic validity without making the model choose the right tool or
 argument values. Treating all failures as “function calling accuracy” obscures this
 boundary.
@@ -104,16 +107,22 @@ qualifies it: a harness can improve form and execution discipline, while semanti
 still depends heavily on the model.
 
 ReAct-style agents maintain a conversational trajectory of thoughts, actions, and
-observations. \openharn's default loop follows this pattern, while its structured mode
-externalizes durable state and exposes only a small valid action set. This design is related
-to the harness requirements described by Ranjan and Talluri~\cite{ranjan2026slm}, but our
-current study does not claim to reproduce their trained specialist model or their end-to-end
-results.
+observations~\cite{yao2023react}. Toolformer similarly studies training models to decide when
+and how to invoke external tools~\cite{schick2023toolformer}. \openharn's default loop follows
+this inference-time pattern, while its structured mode externalizes durable state and exposes
+only a small valid action set. This design is related to the harness requirements described by
+Ranjan and Talluri~\cite{ranjan2026slm}, but our current study does not claim to reproduce their
+trained specialist model or their end-to-end results.
 
 BFCL v4 provides AST-based function-calling evaluation without executing arbitrary tools
 \cite{patil2025bfcl}. We use its single-turn categories because they isolate call structure,
-argument values, parallelism, and abstention. Natural Language Tools~\cite{johnson2025nlt}
-and grammar-constrained decoding motivate our prompt-tools, YES/NO selection, and schema
+argument values, parallelism, and abstention. AgentBench provides a broader framework for
+evaluating LLM agents across interactive environments~\cite{liu2023agentbench}, while SWE-bench
+focuses on issue-resolution performance in real software repositories~\cite{jimenez2024swebench}.
+We use BFCL because the present study isolates the tool-call layer rather than end-to-end task
+Natural Language Tools~\cite{johnson2025nlt}, tool-necessity prediction~\cite{sun2026probeprefill},
+and training-free representation steering~\cite{wang2026asa}, together with grammar-guided
+generation~\cite{willard2023guiding}, motivate our prompt-tools, YES/NO selection, and schema
 constraint modes. These mechanisms are established individually; our contribution is their
 small-model-oriented integration and failure analysis, not the invention of grammar
 constraints or tool selection.
@@ -389,7 +398,8 @@ MiniCPM-V family; broad transfer is untested.
 \item Some configurations were developed iteratively against related tests, creating a risk
 of benchmark overfitting.
 \item The measurements depend on llama-server chat templates, grammar behavior, and build
-versions. Another server may produce different results.
+versions. Another server may produce different results. Guided-generation implementations
+also differ in their supported grammars and decoding semantics~\cite{willard2023guiding}.
 \item BFCL single-turn AST accuracy is not end-to-end coding success and does not evaluate
 filesystem safety, multi-turn state, or final answer quality.
 \item The structured SLM implementation is quantitative evidence only after a direct controlled
