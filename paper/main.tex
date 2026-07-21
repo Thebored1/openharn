@@ -240,13 +240,12 @@ components, but they are not what distinguishes Run E from Run D.
 
 \subsection{Fairness and Reproducibility Requirements}
 
-The reported configurations were developed iteratively, so they should not be interpreted as
-an unbiased model-selection result. The controlled comparison in Section~\ref{sec:controlled}
-is a proposed follow-up study, not an experiment completed in this paper. In that study, all
-models and configurations should be frozen before scoring held-out examples. Each run should report the exact model
-file, server build, prompt, schema, context size, temperature, token limits, number of
-parallel slots, and environment variables. Results should include repeated seeds or repeated
-runs with confidence intervals.
+Configurations were developed iteratively on the fixed subset; reported numbers are therefore
+directional rather than unbiased estimates. A rigorous methodology would freeze prompts, schemas,
+decoding parameters, and model/server versions before scoring held-out examples, and would report
+repeated runs with confidence intervals. It should also compare each intervention independently
+and in combination, using metrics such as latency, generated tokens, invalid-call rate,
+hallucinated-result rate, and final task success.
 
 \section{Results}
 
@@ -342,32 +341,7 @@ and a higher tool-call score does not necessarily imply better end-to-end coding
 The appropriate metrics should report syntax validity, tool selection, argument accuracy,
 call-count accuracy, abstention, execution success, and final task success separately.
 
-\section{Proposed Controlled Study}\label{sec:controlled}
 
-The current artifact makes a broader study possible, but that study has not been run at the
-time of writing and its results must not be read as part of the reported evaluation. We propose
-the following preregistered-style comparison:
-
-\begin{enumerate}
-\item Freeze prompts, schemas, decoding parameters, and model/server versions.
-\item Evaluate at least three model families and at least two sizes or quantizations per
-family, including a model with healthy native function calling and one that requires text or
-structured actions.
-\item Compare: raw native calling; basic conversational loop; loop plus grounding; loop plus
-context limits; prompt-tools; strict grammar; tool filtering; relevance/abstention; and the
-structured SLM mode.
-\item Use development tasks only for configuration selection and a held-out task set for the
-reported comparison. Include both the BFCL subset and real coding/navigation tasks.
-\item Repeat each condition sufficiently to report confidence intervals, especially for
-parallel categories. Report latency, generated tokens, tool-call count, invalid-call rate,
-hallucinated-result rate, and task success in addition to aggregate accuracy.
-\item Test each intervention independently and in combinations so that a gain can be
-attributed to a mechanism rather than to an opaque configuration.
-\end{enumerate}
-
-This study would directly test whether the structured SLM mode improves reliability because of
-its smaller observation/action space, or merely because it changes the benchmark interface.
-It would also reveal whether the observed harness effects transfer across models.
 
 \section{Discussion}
 
@@ -395,8 +369,8 @@ speed/accuracy tradeoff directly.
 \item The primary BFCL result is a fixed 200-example subset, not the full leaderboard.
 \item The main BFCL model is one LFM2 quantization and the secondary experiment is one
 MiniCPM-V family; broad transfer is untested.
-\item Some configurations were developed iteratively against related tests, creating a risk
-of benchmark overfitting.
+\item Configurations were developed iteratively on the fixed subset, so reported numbers are
+directional rather than unbiased estimates; a full held-out multi-model ablation is future work.
 \item The measurements depend on llama-server chat templates, grammar behavior, and build
 versions. Another server may produce different results. Guided-generation implementations
 also differ in their supported grammars and decoding semantics~\cite{willard2023guiding}.
